@@ -70,7 +70,8 @@
     "publish": {
       "provider": "github",
       "owner": "Slipers",
-      "repo": "focus-board"
+      "repo": "focus-board",
+      "releaseType": "release"
     }
   }
 }

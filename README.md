@@ -74,7 +74,7 @@ Produit `release/FocUs-Board-Setup.exe` (installeur NSIS) et `release/FocUs-Boar
 
 ## Mises à jour automatiques
 
-L'app vérifie au démarrage si une nouvelle version est publiée sur ce dépôt ([electron-updater](https://github.com/electron-userland/electron-builder)) et affiche une carte « Mise à jour disponible » avec un bouton **Installer** : téléchargement avec barre de progression, puis redémarrage automatique. Ne s'applique qu'à la version installée via `FocUs-Board-Setup.exe` — l'exécutable portable n'a pas d'emplacement fixe où appliquer une mise à jour en place.
+L'app vérifie au démarrage, puis toutes les 30 minutes, si une nouvelle version est publiée sur ce dépôt ([electron-updater](https://github.com/electron-userland/electron-builder)) et affiche une carte « Mise à jour disponible » avec un bouton **Installer** : téléchargement avec barre de progression, puis redémarrage automatique. Ne s'applique qu'à la version installée via `FocUs-Board-Setup.exe` — l'exécutable portable n'a pas d'emplacement fixe où appliquer une mise à jour en place, il ne vérifie donc rien.
 
 **Publier une mise à jour** (depuis une machine authentifiée avec `gh auth login`, scope `repo`) :
 

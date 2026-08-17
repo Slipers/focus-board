@@ -142,13 +142,27 @@ function buildMenu() {
  * place, `app.isPackaged` seul ne suffit donc pas à l'écarter — on vérifie
  * aussi la présence du fichier de métadonnées que seul l'installeur pose.
  */
+/** Cet exécutable a-t-il été lancé depuis l'exécutable portable ? */
+function isPortableBuild(): boolean {
+  // electron-builder pose cette variable d'environnement uniquement quand le
+  // process a démarré depuis l'exe portable, quelle que soit sa position sur
+  // le disque — c'est la seule façon fiable de le distinguer d'une installation.
+  return Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
+}
+
+const RECHECK_INTERVAL_MS = 30 * 60 * 1000;
+
 function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
   const send = (channel: string, ...args: unknown[]) => mainWindow?.webContents.send(channel, ...args);
+  // Un nouveau sondage pendant qu'un téléchargement est en cours (ou prêt)
+  // ne doit ni l'interrompre ni faire clignoter la carte côté renderer.
+  let updateInFlight = false;
 
   autoUpdater.on('update-available', (info) => {
+    updateInFlight = true;
     send('updater:available', { version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : null });
   });
   autoUpdater.on('download-progress', (p) => {
@@ -168,14 +182,20 @@ function setupAutoUpdater() {
     autoUpdater.quitAndInstall();
   });
 
-  // Différé pour ne jamais retarder l'affichage de la fenêtre au démarrage ;
-  // une absence de réseau ne doit provoquer ni popup ni blocage, juste un
-  // échec silencieux côté console.
-  setTimeout(() => {
+  const check = () => {
+    if (updateInFlight) return;
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('Vérification de mise à jour impossible :', err);
     });
-  }, 2500);
+  };
+
+  // Différé pour ne jamais retarder l'affichage de la fenêtre au démarrage ;
+  // une absence de réseau ne doit provoquer ni popup ni blocage, juste un
+  // échec silencieux côté console. Puis un sondage périodique : l'app tourne
+  // souvent des heures d'affilée, elle ne doit pas dépendre d'un redémarrage
+  // pour remarquer une nouvelle release.
+  setTimeout(check, 2500);
+  setInterval(check, RECHECK_INTERVAL_MS);
 }
 
 /* ------------------------------------------------------------------ IPC */
@@ -287,9 +307,9 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-  // En dev, il n'y a ni build publié ni fichier de métadonnées à lire :
-  // electron-updater échouerait à chaque lancement pour rien.
-  if (app.isPackaged) setupAutoUpdater();
+  // En dev, il n'y a ni build publié ni fichier de métadonnées à lire ; et le
+  // portable n'a pas d'emplacement fixe où s'installer par-dessus lui-même.
+  if (app.isPackaged && !isPortableBuild()) setupAutoUpdater();
 });
 
 app.on('window-all-closed', () => {
