@@ -689,6 +689,13 @@ button {
   margin-top: 0;
 }
 
+.settings-version {
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
 .field {
   margin-bottom: 16px;
 }

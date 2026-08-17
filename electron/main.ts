@@ -293,6 +293,8 @@ ipcMain.handle('shell:showItem', async (_e, filePath: string) => {
   shell.showItemInFolder(filePath);
 });
 
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.on('theme:set', (_e, theme: 'light' | 'dark') => {
   nativeTheme.themeSource = theme;
   mainWindow?.setTitleBarOverlay?.(

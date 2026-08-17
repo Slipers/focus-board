@@ -3,6 +3,7 @@ import type { Editor } from '../editor/editor';
 import { DEFAULT_TABLET } from '../core/types';
 import { outlineOptionsFor } from '../core/brushes';
 import { cascadeAmount, outlineToPath, strokeOutline, streamlinePoint } from '../core/freehand';
+import { getDisplayVersion } from '../io/storage';
 import { h } from './dom';
 import { showModal } from './modal';
 
@@ -213,9 +214,15 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
         },
       }),
     ),
+    h('p', { class: 'settings-version', text: '' }),
   );
 
   syncIntensity();
+
+  const versionLine = modal.body.querySelector<HTMLParagraphElement>('.settings-version')!;
+  void getDisplayVersion().then((v) => {
+    if (v) versionLine.textContent = `FocUs Board ${v}`;
+  });
 }
 
 /**

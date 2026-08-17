@@ -33,6 +33,7 @@ interface UpdaterApi {
 
 interface FocusApi {
   platform: string;
+  getVersion(): Promise<string>;
   boards: {
     list(): Promise<BoardSummary[]>;
     read(id: ID): Promise<BoardDoc | null>;
@@ -199,3 +200,13 @@ export function onMenuCommand(handler: (command: string) => void): () => void {
 
 /** `null` en dehors d'Electron (navigateur) ou en dev : il n'y a alors rien à mettre à jour. */
 export const updater: UpdaterApi | null = api?.updater ?? null;
+
+/**
+ * Numéro de version affiché à l'utilisateur (ex. « 1.1 ») : le patch est tu
+ * quand il vaut 0, conformément à la convention 1.0/1.1/… de ce projet.
+ */
+export async function getDisplayVersion(): Promise<string | null> {
+  if (!api) return null;
+  const full = await api.getVersion();
+  return full.replace(/\.0$/, '');
+}

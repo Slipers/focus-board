@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Volontairement pas « focus » : window.focus() est une API native du navigateur.
 contextBridge.exposeInMainWorld('focusApi', {
   platform: process.platform,
+  getVersion: () => ipcRenderer.invoke('app:version'),
 
   boards: {
     list: () => ipcRenderer.invoke('boards:list'),
