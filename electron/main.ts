@@ -1,11 +1,15 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import electronUpdaterPkg from 'electron-updater';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// electron-updater est un module CommonJS ; Node ne parvient pas à en dériver
+// statiquement l'export nommé `autoUpdater` sous ESM, il faut passer par le
+// défaut puis déstructurer à l'exécution.
+const { autoUpdater } = electronUpdaterPkg;
 const DEV_URL = process.env.FOCUS_DEV_URL;
 
 /** Occlusion detection on Windows can stall canvas repaints when the window is partly covered. */
