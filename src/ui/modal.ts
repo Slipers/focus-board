@@ -5,6 +5,8 @@ export interface ModalHandle {
   root: HTMLElement;
   body: HTMLElement;
   close: () => void;
+  /** Enregistre un nettoyage (désabonnements…) exécuté une fois à la fermeture. */
+  onClose: (fn: () => void) => void;
 }
 
 let openModal: ModalHandle | null = null;
@@ -43,6 +45,8 @@ export function showModal(title: string, options: { wide?: boolean; subtitle?: s
     }
   };
 
+  const cleanups: Array<() => void> = [];
+
   const handle: ModalHandle = {
     root,
     body,
@@ -50,7 +54,10 @@ export function showModal(title: string, options: { wide?: boolean; subtitle?: s
       document.removeEventListener('keydown', onKey, true);
       root.remove();
       if (openModal === handle) openModal = null;
+      for (const fn of cleanups) fn();
+      cleanups.length = 0;
     },
+    onClose: (fn) => cleanups.push(fn),
   };
 
   document.addEventListener('keydown', onKey, true);

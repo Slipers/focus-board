@@ -156,7 +156,7 @@ export const DEFAULT_TABLET: TabletSettings = {
   pressureCurve: 0.75,
   minWidth: 0.18,
   smoothing: true,
-  streamline: 0.6,
+  streamline: 0.65,
   palmRejection: true,
   fingerPans: true,
   penEraserTip: true,

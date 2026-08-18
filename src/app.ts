@@ -227,6 +227,9 @@ class App {
     this.settings.theme = this.settings.theme === 'dark' ? 'light' : 'dark';
     this.applyTheme();
     this.chrome.refreshTheme();
+    // Le thème clair doit donner un tableau entièrement blanc, pas une
+    // interface claire avec un fond de tableau resté sombre.
+    this.editor.setPaper(this.settings.theme === 'light' ? 'white' : 'slate');
     void writeSettings(this.settings);
   }
 

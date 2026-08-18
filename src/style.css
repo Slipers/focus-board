@@ -550,8 +550,11 @@ button {
 }
 
 .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 16px 18px 18px;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .modal-text {

@@ -134,6 +134,9 @@ export class Editor {
   private lastCamKey = '';
   private frameQueued = false;
   private sceneDirty = true;
+  private wheelZoomTarget: number | null = null;
+  private wheelZoomAnchorScreen: { x: number; y: number } | null = null;
+  private wheelZoomAnchorWorld: { x: number; y: number } | null = null;
 
   private pointers = new Map<number, { x: number; y: number; type: string }>();
   private action: Action | null = null;
@@ -240,7 +243,10 @@ export class Editor {
     const rect = this.host.getBoundingClientRect();
     this.vw = Math.max(1, Math.round(rect.width));
     this.vh = Math.max(1, Math.round(rect.height));
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    // Deux canvas plein écran à 2,5x sur un écran 4K coûtent des dizaines de
+    // Mo de mémoire vidéo pour un gain de netteté imperceptible au-delà de 2x
+    // (déjà l'équivalent d'un écran « retina »).
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     for (const c of [this.sceneCanvas, this.overlayCanvas]) {
       c.width = Math.round(this.vw * this.dpr);
       c.height = Math.round(this.vh * this.dpr);
@@ -272,6 +278,7 @@ export class Editor {
 
   private renderFrame() {
     this.frameQueued = false;
+    const zoomAnimating = this.stepWheelZoomAnimation();
     const cam = this.store.camera;
     const key = this.camKey();
 
@@ -312,7 +319,7 @@ export class Editor {
       paperDark: PAPERS[this.store.paper].dark,
     });
 
-    if (this.laser.length) this.schedule();
+    if (this.laser.length || zoomAnimating) this.schedule();
   }
 
   private ringState() {
@@ -345,12 +352,52 @@ export class Editor {
   }
 
   zoomAt(screenX: number, screenY: number, factor: number) {
+    this.cancelWheelZoomAnimation();
     const cam = this.store.camera;
     const before = screenToWorld(cam, screenX, screenY);
     cam.zoom = clamp(cam.zoom * factor, MIN_ZOOM, MAX_ZOOM);
     cam.x = before.x - screenX / cam.zoom;
     cam.y = before.y - screenY / cam.zoom;
     this.cameraChanged();
+  }
+
+  /**
+   * Zoom amorti pour la molette : chaque cran met à jour une cible plutôt que
+   * d'appliquer le facteur d'un coup, et la caméra glisse vers cette cible sur
+   * quelques images. Des crans rapprochés (molette rapide) déplacent
+   * simplement la cible sans à-coup, au lieu de s'accumuler en sauts distincts.
+   */
+  private zoomAtSmooth(screenX: number, screenY: number, factor: number) {
+    const cam = this.store.camera;
+    const base = this.wheelZoomTarget ?? cam.zoom;
+    this.wheelZoomTarget = clamp(base * factor, MIN_ZOOM, MAX_ZOOM);
+    this.wheelZoomAnchorScreen = { x: screenX, y: screenY };
+    this.wheelZoomAnchorWorld = screenToWorld(cam, screenX, screenY);
+    this.schedule();
+  }
+
+  private cancelWheelZoomAnimation() {
+    this.wheelZoomTarget = null;
+    this.wheelZoomAnchorScreen = null;
+    this.wheelZoomAnchorWorld = null;
+  }
+
+  /** Avance l'animation d'un cran ; renvoie vrai tant qu'il faut continuer à boucler. */
+  private stepWheelZoomAnimation(): boolean {
+    if (this.wheelZoomTarget === null) return false;
+    const cam = this.store.camera;
+    const anchorScreen = this.wheelZoomAnchorScreen!;
+    const anchorWorld = this.wheelZoomAnchorWorld!;
+    const ease = 0.38;
+    let next = cam.zoom + (this.wheelZoomTarget - cam.zoom) * ease;
+    const settled = Math.abs(this.wheelZoomTarget - next) < 0.0006;
+    if (settled) next = this.wheelZoomTarget;
+    cam.zoom = clamp(next, MIN_ZOOM, MAX_ZOOM);
+    cam.x = anchorWorld.x - anchorScreen.x / cam.zoom;
+    cam.y = anchorWorld.y - anchorScreen.y / cam.zoom;
+    if (settled) this.cancelWheelZoomAnimation();
+    this.cameraChanged();
+    return !settled;
   }
 
   setZoom(zoom: number) {
@@ -820,6 +867,7 @@ export class Editor {
     const touches = [...this.pointers.entries()].filter(([, v]) => v.type === 'touch');
     if (touches.length === 2) {
       this.cancelAction();
+      this.cancelWheelZoomAnimation();
       const [[idA, a], [idB, b]] = touches;
       const midX = (a.x + b.x) / 2;
       const midY = (a.y + b.y) / 2;
@@ -848,6 +896,7 @@ export class Editor {
 
     switch (tool) {
       case 'pan':
+        this.cancelWheelZoomAnimation();
         this.action = { kind: 'pan', pointerId: e.pointerId, startX: p.x, startY: p.y, camX: this.store.camera.x, camY: this.store.camera.y };
         this.host.style.cursor = 'grabbing';
         return;
@@ -1432,11 +1481,13 @@ export class Editor {
     const cam = this.store.camera;
 
     if (e.shiftKey) {
+      this.cancelWheelZoomAnimation();
       cam.x += (e.deltaY || e.deltaX) / cam.zoom;
       this.cameraChanged();
       return;
     }
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) * 1.5) {
+      this.cancelWheelZoomAnimation();
       cam.x += e.deltaX / cam.zoom;
       cam.y += e.deltaY / cam.zoom;
       this.cameraChanged();
@@ -1444,7 +1495,7 @@ export class Editor {
     }
 
     const delta = clamp(e.deltaY, -240, 240);
-    this.zoomAt(p.x, p.y, Math.exp(-delta * 0.001));
+    this.zoomAtSmooth(p.x, p.y, Math.exp(-delta * 0.001));
   };
 
   private onDrop = (e: DragEvent) => {

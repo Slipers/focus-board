@@ -37,14 +37,16 @@ export function recognizeShape(el: StrokeElement): Recognition | null {
   const w = maxX - minX;
   const h = maxY - minY;
   const diag = Math.hypot(w, h);
-  if (diag < 24) return null;
+  if (diag < 30) return null;
 
   let perimeter = 0;
   for (let i = 1; i < n; i++) perimeter += Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
-  if (perimeter < 40) return null;
+  if (perimeter < 50) return null;
 
   const gap = Math.hypot(xs[n - 1] - xs[0], ys[n - 1] - ys[0]);
-  const closed = gap < diag * 0.28;
+  // Un tracé qui ne se referme pas franchement n'est probablement pas voulu
+  // comme une forme fermée — mieux vaut le laisser tel quel.
+  const closed = gap < diag * 0.2;
 
   /* --- tracé ouvert : droite ? --- */
   if (!closed) {
@@ -100,24 +102,29 @@ export function recognizeShape(el: StrokeElement): Recognition | null {
   // Le seul critère du rayon confond un carré avec un cercle (rayon normalisé
   // 1 au milieu des côtés, 1,41 aux coins) : l'aire relative les sépare
   // nettement — π/4 ≈ 0,79 pour un disque contre ~1 pour un rectangle.
-  if (cv < 0.11 && mean > 0.88 && mean < 1.1 && fill < 0.88) {
+  // Les seuils sont volontairement stricts : un griffonnage fermé mais
+  // irrégulier (contour non circulaire) ne doit jamais passer pour un cercle.
+  if (cv < 0.08 && mean > 0.9 && mean < 1.08 && fill < 0.86 && fill > 0.7) {
     return { shape: 'ellipse', x: minX, y: minY, w, h };
   }
 
-  if (corners.length === 3) {
+  // Un triangle exige en plus une forme réellement pleine : trois sommets
+  // après simplification peuvent aussi sortir d'un griffonnage étroit et tordu.
+  const triangleFill = polygonArea(corners) / (w * h || 1);
+  if (corners.length === 3 && triangleFill > 0.32 && triangleFill < 0.62) {
     return { shape: 'triangle', x: minX, y: minY, w, h };
   }
   if (corners.length === 4) {
     // Un quadrilatère dont les sommets tombent près des milieux des côtés est un losange.
     const nearMid = corners.filter(([px, py]) => {
-      const dxMid = Math.abs(px - cx) < w * 0.18;
-      const dyMid = Math.abs(py - cy) < h * 0.18;
+      const dxMid = Math.abs(px - cx) < w * 0.14;
+      const dyMid = Math.abs(py - cy) < h * 0.14;
       return dxMid || dyMid;
     }).length;
-    if (nearMid >= 3 && fill < 0.72) return { shape: 'diamond', x: minX, y: minY, w, h };
-    if (fill > 0.72) return { shape: 'rect', x: minX, y: minY, w, h };
+    if (nearMid >= 3 && fill > 0.35 && fill < 0.68) return { shape: 'diamond', x: minX, y: minY, w, h };
+    if (fill > 0.8) return { shape: 'rect', x: minX, y: minY, w, h };
   }
-  if (corners.length === 5 && fill > 0.78) {
+  if (corners.length === 5 && fill > 0.85) {
     return { shape: 'rect', x: minX, y: minY, w, h };
   }
 

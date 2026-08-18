@@ -194,9 +194,15 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
       () => s.inkToShape,
       (v) => (s.inkToShape = v),
     ),
+    toggle(
+      'Quadrillage',
+      'Affiche des repères sur le tableau. Désactivez pour un fond entièrement uni.',
+      () => editor.store.background !== 'blank',
+      (v) => editor.setBackground(v ? 'grid' : 'blank'),
+    ),
 
     h('h3', { class: 'section-title', text: 'Diagnostic du stylet' }),
-    diagnostics(editor, s),
+    diagnostics(editor, s, modal.onClose),
 
     h(
       'div',
@@ -230,7 +236,7 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
  * tablette transmet bien la pression. Si `type` reste « mouse » ou que la
  * pression est figée à 0.50, Windows Ink est désactivé côté pilote.
  */
-function diagnostics(editor: Editor, settings: AppSettings): HTMLElement {
+function diagnostics(editor: Editor, settings: AppSettings, onClose: (fn: () => void) => void): HTMLElement {
   const status = h('div', { class: 'diag-status' });
   const readout = h('div', { class: 'diag-readout' });
   const canvas = h('canvas', { class: 'diag-canvas' });
@@ -267,8 +273,8 @@ function diagnostics(editor: Editor, settings: AppSettings): HTMLElement {
     }
   };
 
-  editor.on('pointer', render);
-  editor.on('penFallback', render);
+  onClose(editor.on('pointer', render));
+  onClose(editor.on('penFallback', render));
   render();
 
   let drawing = false;

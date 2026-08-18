@@ -14,8 +14,6 @@ const DEV_URL = process.env.FOCUS_DEV_URL;
 
 /** Occlusion detection on Windows can stall canvas repaints when the window is partly covered. */
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-/** Keep the compositor running at the display refresh rate for low-latency inking. */
-app.commandLine.appendSwitch('disable-frame-rate-limit');
 
 const userDir = () => app.getPath('userData');
 const boardsDir = () => path.join(userDir(), 'boards');
