@@ -2,7 +2,7 @@ import type { AppSettings } from '../core/types';
 import type { Editor } from '../editor/editor';
 import { DEFAULT_TABLET } from '../core/types';
 import { outlineOptionsFor } from '../core/brushes';
-import { cascadeAmount, outlineToPath, strokeOutline, streamlinePoint } from '../core/freehand';
+import { cascadeAmount, outlineToPath, stabilizePoint, stabilizerRadius, strokeOutline, streamlinePoint } from '../core/freehand';
 import { getDisplayVersion } from '../io/storage';
 import { h } from './dom';
 import { showModal } from './modal';
@@ -117,7 +117,7 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
     h('h3', { class: 'section-title', text: 'Stylet et tablette graphique' }),
     toggle(
       'Lissage de l’écriture',
-      'Atténue le tremblement de la main pendant le tracé, puis repasse sur le trait terminé pour effacer les oscillations résiduelles.',
+      'Arrondit le tracé à la volée pour atténuer le tremblement de la main.',
       () => s.tablet.smoothing,
       (v) => {
         s.tablet.smoothing = v;
@@ -125,6 +125,13 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
       },
     ),
     intensityField,
+    slider(
+      'Stabilité de l’écriture',
+      'À quel point les lettres ressortent nettes malgré une main qui tremble. Le trait ignore complètement les micro-mouvements sous le seuil, au prix d’un léger retard sur le stylet. À 0, aucun filtrage.',
+      0, 1, 0.05,
+      () => s.tablet.stability,
+      (v) => (s.tablet.stability = v),
+    ),
     slider(
       'Courbe de pression',
       'Sous 1, un appui léger donne déjà un trait épais. Au-dessus, il faut appuyer davantage.',
@@ -279,8 +286,9 @@ function diagnostics(editor: Editor, settings: AppSettings, onClose: (fn: () => 
 
   let drawing = false;
   let pts: number[] = [];
-  // Mêmes deux étages de filtre que la vraie toile, pour que l'essai reflète
-  // exactement ce que donnera le réglage.
+  // Même chaîne que la vraie toile — zone morte puis deux étages de filtre —
+  // pour que l'essai reflète exactement ce que donneront les réglages.
+  let anchor: { x: number; y: number } | null = null;
   let stageA: [number, number, number] | null = null;
   let stageB: [number, number, number] | null = null;
 
@@ -305,17 +313,21 @@ function diagnostics(editor: Editor, settings: AppSettings, onClose: (fn: () => 
     const pressure = e.pointerType === 'pen' ? Math.max(0.02, e.pressure) : 0.6;
     stageA = [x, y, pressure];
     stageB = [x, y, pressure];
+    anchor = { x, y };
     pts.push(x, y, pressure);
     paint();
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!drawing || !stageA || !stageB) return;
+    if (!drawing || !stageA || !stageB || !anchor) return;
     const amount = settings.tablet.smoothing ? cascadeAmount(settings.tablet.streamline) : 0;
+    const radius = stabilizerRadius(settings.tablet.stability);
     const list = e.getCoalescedEvents?.() ?? [];
     for (const ce of list.length ? list : [e]) {
       const { x, y } = localPoint(ce);
       const pressure = ce.pointerType === 'pen' ? Math.max(0.02, ce.pressure) : 0.6;
-      stageA = streamlinePoint(stageA[0], stageA[1], stageA[2], x, y, pressure, amount);
+      const [stx, sty] = stabilizePoint(anchor.x, anchor.y, x, y, radius);
+      anchor = { x: stx, y: sty };
+      stageA = streamlinePoint(stageA[0], stageA[1], stageA[2], stx, sty, pressure, amount);
       stageB = streamlinePoint(stageB[0], stageB[1], stageB[2], stageA[0], stageA[1], stageA[2], amount);
       pts.push(stageB[0], stageB[1], stageB[2]);
     }

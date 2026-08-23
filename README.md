@@ -21,7 +21,7 @@ Microsoft Whiteboard ferme, et l'application installée n'était qu'une coquille
 ## Fonctionnalités
 
 - 🖊️ **Encre à pression réelle** — stylo, feutre, surligneur, crayon ; largeur variable avec attaque et sortie effilées, détection automatique d'une tablette qui ne transmet pas de vraie pression avec repli sur la vitesse
-- 🧽 **Gomme au trait ou ponctuelle** — la gomme ponctuelle découpe un tracé en deux, même au milieu d'une longue ligne
+- 🧽 **Gomme au trait ou ponctuelle** — la gomme ponctuelle découpe un tracé en deux, même au milieu d'une longue ligne ; sa taille grossit avec la vitesse du geste, pour balayer large d'un coup de main
 - 🔷 **Formes, notes, texte, images** — rectangle, ellipse, losange, triangle, étoile, ligne, flèche ; notes autocollantes à texte auto-ajusté ; images par glisser-déposer ou collage
 - ✨ **Reconnaissance de formes** — un cercle ou un rectangle tracé à main levée devient une forme nette (désactivable)
 - 🧲 **Sélection et manipulation** — rectangle ou lasso, déplacement, redimensionnement, rotation, magnétisme sur les bords et centres voisins, ordre de superposition
@@ -46,7 +46,8 @@ Vos tableaux sont enregistrés automatiquement dans `%APPDATA%\FocUs Board\board
 Le point sur lequel l'app est le plus exigeante avec elle-même :
 
 - **Détection automatique de la pression** — si le pilote de la tablette ne transmet aucune vraie mesure de force (mode WinTab plutôt que Windows Ink), l'app le détecte dès les premiers traits et bascule sur une épaisseur simulée par la vitesse, avec un indicateur clair dans ⚙ Réglages → Diagnostic du stylet.
-- **Lissage réglable** — deux étages de filtre en cascade pendant la capture, plus une passe finale sur le trait terminé, pour effacer le tremblement de la main sans aplatir la forme des lettres.
+- **Lissage réglable** — deux étages de filtre en cascade pendant la capture, calibrés pour couper le tremblement sans ajouter de retard par rapport à un filtre simple.
+- **Stabilité réglable (0 → 1)** — une zone morte qui annule complètement les micro-mouvements sous son seuil, plutôt que de les atténuer : c'est ce qui fait ressortir des lettres nettes malgré une main qui tremble, au prix d'un léger retard du trait sur le stylet.
 - **Rejet de paume**, bout gomme du stylet, bouton latéral configurable (rien / déplacer / gommer / sélectionner), inclinaison pour un effet de biseau.
 
 ## Comment ça marche

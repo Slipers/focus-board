@@ -55,6 +55,37 @@ export function cascadeAmount(streamline: number): number {
   return 1 - (2 * (1 - s)) / (2 - s);
 }
 
+/** Rayon de la zone morte du stabilisateur, en px écran, pour une stabilité 0..1. */
+export function stabilizerRadius(stability: number): number {
+  return Math.min(1, Math.max(0, stability)) * 14;
+}
+
+/**
+ * Stabilisateur « à la corde ».
+ *
+ * Le point du trait est relié au stylet par une corde de longueur `radius` :
+ * tant que le stylet reste dans ce rayon, le trait ne bouge pas du tout ; au
+ * delà, il est tiré jusqu'à se retrouver exactement à `radius` du stylet.
+ *
+ * C'est ce qui différencie la stabilité du lissage : le lissage atténue le
+ * tremblement proportionnellement (il en reste toujours un peu), là où la zone
+ * morte l'annule entièrement tant qu'il reste sous le seuil — au prix d'un
+ * retard du trait, qui suit le stylet à distance constante.
+ */
+export function stabilizePoint(
+  anchorX: number, anchorY: number,
+  x: number, y: number,
+  radius: number,
+): [number, number] {
+  if (radius <= 0) return [x, y];
+  const dx = x - anchorX;
+  const dy = y - anchorY;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= radius) return [anchorX, anchorY];
+  const k = radius / dist;
+  return [x - dx * k, y - dy * k];
+}
+
 /**
  * Lissage exponentiel appliqué à la volée pendant la capture.
  * `amount` vaut 0 (aucun) à ~0.9 (très lissé).

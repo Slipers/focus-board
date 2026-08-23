@@ -37,7 +37,7 @@ import {
   type Rect,
 } from '../core/geom';
 import { elementsInLasso, elementsInRect, pickTopmost, segmentHitsElement } from '../core/hit';
-import { cascadeAmount, simplifyStroke, streamlinePoint } from '../core/freehand';
+import { cascadeAmount, simplifyStroke, stabilizePoint, stabilizerRadius, streamlinePoint } from '../core/freehand';
 import { BRUSHES } from '../core/brushes';
 import { PAPERS, readableTextColor } from '../core/palette';
 import {
@@ -57,12 +57,18 @@ import { applyMove, applyResize, applyRotate, computeSnap, type TransformSession
 export const MIN_ZOOM = 0.04;
 export const MAX_ZOOM = 16;
 
+/** Vitesse (px écran / ms) à laquelle la gomme atteint son grossissement maximal. */
+const ERASER_SPEED_AT_MAX = 2.2;
+const ERASER_MAX_SCALE = 3;
+
 export interface StyleState {
   ink: string;
   brush: BrushKind;
   sizes: Record<BrushKind, number>;
   eraserSize: number;
   eraserMode: 'stroke' | 'point';
+  /** La gomme grossit avec la vitesse du geste, comme sur un vrai tableau. */
+  eraserDynamic: boolean;
   shape: ShapeKind;
   shapeStroke: string;
   shapeFill: string;
@@ -145,6 +151,11 @@ export class Editor {
   private smoothA: { x: number; y: number; p: number } | null = null;
   private smoothB: { x: number; y: number; p: number } | null = null;
   private lastRaw: { x: number; y: number; p: number } | null = null;
+  /** Extrémité de la « corde » du stabilisateur (voir stabilizePoint). */
+  private stabAnchor: { x: number; y: number } | null = null;
+  /** Grossissement courant de la gomme, piloté par la vitesse du geste. */
+  private eraserScale = 1;
+  private eraserLastTime = 0;
   private lastSampleTime = 0;
   private lastSpeed = 0;
   private penFlatStreak = 0;
@@ -323,8 +334,10 @@ export class Editor {
   }
 
   private ringState() {
-    if (this.tool === 'eraser' && this.hover) {
-      return { x: this.hover.x, y: this.hover.y, r: this.style.eraserSize / 2, kind: 'eraser' as const };
+    // Le bout gomme du stylet gomme sans que l'outil actif soit la gomme :
+    // l'anneau doit quand même suivre, sinon le grossissement est invisible.
+    if (this.hover && (this.tool === 'eraser' || this.action?.kind === 'erase')) {
+      return { x: this.hover.x, y: this.hover.y, r: this.eraserDiameter() / 2, kind: 'eraser' as const };
     }
     if (
       this.settings.tablet.hoverCursor &&
@@ -907,6 +920,10 @@ export class Editor {
         this.startDraw(e, world, tool as BrushKind);
         return;
       case 'eraser':
+        // Chaque geste repart de la taille nominale : le grossissement traduit
+        // la vitesse du coup de gomme en cours, pas celle du précédent.
+        this.eraserScale = 1;
+        this.eraserLastTime = 0;
         this.store.begin(this.selection);
         this.action = { kind: 'erase', pointerId: e.pointerId, lastX: world.x, lastY: world.y };
         this.eraseSegment(world.x, world.y, world.x, world.y);
@@ -943,6 +960,7 @@ export class Editor {
     this.smoothA = { ...seed };
     this.smoothB = { ...seed };
     this.lastRaw = { ...seed };
+    this.stabAnchor = { x: world.x, y: world.y };
     this.live = {
       brush,
       color: this.style.ink,
@@ -1075,6 +1093,7 @@ export class Editor {
         const events = this.samples(e);
         for (const ce of events) {
           const w = this.toWorld(ce);
+          this.updateEraserScale(a.lastX, a.lastY, w.x, w.y, ce.timeStamp || performance.now());
           this.eraseSegment(a.lastX, a.lastY, w.x, w.y);
           a.lastX = w.x;
           a.lastY = w.y;
@@ -1147,18 +1166,37 @@ export class Editor {
   /**
    * Ajoute un échantillon au tracé en cours.
    *
-   * Le lissage est un filtre exponentiel en deux étages plutôt qu'un seul :
-   * à retard équivalent, la cascade coupe bien plus franchement le tremblement
-   * de la main, qui est une oscillation rapide de faible amplitude.
+   * Deux mécanismes se succèdent, dans cet ordre :
+   *  1. la stabilité, une zone morte qui supprime purement et simplement les
+   *     micro-mouvements sous son rayon ;
+   *  2. le lissage, un filtre exponentiel en deux étages plutôt qu'un seul —
+   *     à retard équivalent, la cascade coupe bien plus franchement le
+   *     tremblement, qui est une oscillation rapide de faible amplitude.
+   *
+   * `bypassStability` sert au lever du stylet : la zone morte empêcherait par
+   * construction le trait de rejoindre la position finale.
    */
-  private extendDraw(x: number, y: number, pressure: number) {
+  private extendDraw(x: number, y: number, pressure: number, bypassStability = false) {
     if (!this.live || !this.smoothA || !this.smoothB) return;
     this.lastRaw = { x, y, p: pressure };
-    const amount = this.settings.tablet.smoothing ? cascadeAmount(this.settings.tablet.streamline) : 0;
+    const tablet = this.settings.tablet;
+    const amount = tablet.smoothing ? cascadeAmount(tablet.streamline) : 0;
+
+    let inX = x;
+    let inY = y;
+    if (!bypassStability && this.stabAnchor) {
+      // Le rayon est fixé en px écran : le tremblement de la main ne dépend
+      // pas du zoom du tableau.
+      const radius = stabilizerRadius(tablet.stability) / this.store.camera.zoom;
+      const [stx, sty] = stabilizePoint(this.stabAnchor.x, this.stabAnchor.y, x, y, radius);
+      this.stabAnchor = { x: stx, y: sty };
+      inX = stx;
+      inY = sty;
+    }
 
     const [ax, ay, ap] = streamlinePoint(
       this.smoothA.x, this.smoothA.y, this.smoothA.p,
-      x, y, pressure,
+      inX, inY, pressure,
       amount,
     );
     this.smoothA = { x: ax, y: ay, p: ap };
@@ -1255,8 +1293,34 @@ export class Editor {
     this.schedule();
   }
 
+  /**
+   * Diamètre effectif de la gomme, grossissement par la vitesse compris.
+   * Le geste large et rapide qu'on fait pour tout effacer d'un tableau balaie
+   * ainsi plus de surface, exactement comme avec la main sur un vrai tableau.
+   */
+  eraserDiameter(): number {
+    return this.style.eraserSize * (this.style.eraserDynamic ? this.eraserScale : 1);
+  }
+
+  /**
+   * Ajuste le grossissement d'après la vitesse du geste, en px écran par ms —
+   * la mesure doit refléter le mouvement de la main, pas le zoom du tableau.
+   * La convergence progressive évite que la gomme ne clignote entre deux tailles.
+   */
+  private updateEraserScale(ax: number, ay: number, bx: number, by: number, timeStamp: number) {
+    if (!this.style.eraserDynamic) {
+      this.eraserScale = 1;
+      return;
+    }
+    const dt = this.eraserLastTime ? Math.min(120, Math.max(1, timeStamp - this.eraserLastTime)) : 16;
+    this.eraserLastTime = timeStamp;
+    const speed = (Math.hypot(bx - ax, by - ay) * this.store.camera.zoom) / dt;
+    const target = 1 + clamp(speed / ERASER_SPEED_AT_MAX, 0, 1) * (ERASER_MAX_SCALE - 1);
+    this.eraserScale += (target - this.eraserScale) * 0.25;
+  }
+
   private eraseSegment(ax: number, ay: number, bx: number, by: number) {
-    const radius = this.style.eraserSize / 2;
+    const radius = this.eraserDiameter() / 2;
     const pointMode = this.style.eraserMode === 'point';
     for (const el of [...this.store.allSorted()].reverse()) {
       if (el.locked) continue;
@@ -1306,6 +1370,8 @@ export class Editor {
         break;
       case 'erase':
         this.store.commit('Gommer', this.selection);
+        this.eraserScale = 1;
+        this.eraserLastTime = 0;
         break;
       case 'pan':
         this.updateCursor();
@@ -1365,7 +1431,7 @@ export class Editor {
     // s'arrête avant la pointe.
     if (this.live && this.lastRaw && this.settings.tablet.smoothing) {
       const end = this.lastRaw;
-      for (let i = 0; i < 24; i++) this.extendDraw(end.x, end.y, end.p);
+      for (let i = 0; i < 24; i++) this.extendDraw(end.x, end.y, end.p, true);
       // La convergence est géométrique : elle n'atteint jamais tout à fait la
       // cible. On pose le point final exactement où le stylet s'est levé.
       const pts = this.live.points;
@@ -1380,6 +1446,7 @@ export class Editor {
     this.smoothA = null;
     this.smoothB = null;
     this.lastRaw = null;
+    this.stabAnchor = null;
     if (!live) return;
 
     // Le filtre temps réel en cascade a déjà fait le travail pendant la
@@ -1670,6 +1737,7 @@ function defaultStyle(store: BoardStore): StyleState {
     },
     eraserSize: 28,
     eraserMode: 'stroke',
+    eraserDynamic: true,
     shape: 'rect',
     shapeStroke: paper.defaultInk,
     shapeFill: 'transparent',

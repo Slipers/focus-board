@@ -354,6 +354,15 @@ export class Chrome {
         ),
       ),
       this.group('Taille', ...this.sizeDots([14, 28, 48, 80], style.eraserSize, (s) => this.editor.setStyle({ eraserSize: s }))),
+      this.group(
+        'Comportement',
+        h('button', {
+          class: `chip${style.eraserDynamic ? ' active' : ''}`,
+          title: 'Plus vous gommez vite, plus la gomme est large — comme la main sur un vrai tableau',
+          text: 'Taille dynamique',
+          on: { click: () => this.editor.setStyle({ eraserDynamic: !style.eraserDynamic }) },
+        }),
+      ),
     );
   }
 

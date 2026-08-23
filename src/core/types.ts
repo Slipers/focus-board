@@ -130,6 +130,13 @@ export interface TabletSettings {
   smoothing: boolean;
   /** Intensité du lissage (0 = brut, 0.9 = très lissé). Sans effet si `smoothing` est faux. */
   streamline: number;
+  /**
+   * Stabilité de l'écriture (0..1) : rayon de la zone morte sous laquelle un
+   * mouvement du stylet ne déplace pas du tout le trait. Contrairement au
+   * lissage, qui atténue le tremblement proportionnellement, la zone morte
+   * l'annule complètement tant qu'il reste sous ce seuil.
+   */
+  stability: number;
   /** Ignore les contacts tactiles quand un stylet est actif. */
   palmRejection: boolean;
   /** Un doigt déplace la vue au lieu de dessiner. */
@@ -157,6 +164,7 @@ export const DEFAULT_TABLET: TabletSettings = {
   minWidth: 0.18,
   smoothing: true,
   streamline: 0.65,
+  stability: 0.35,
   palmRejection: true,
   fingerPans: true,
   penEraserTip: true,
