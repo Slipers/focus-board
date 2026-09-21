@@ -157,6 +157,10 @@ export interface AppSettings {
   tablet: TabletSettings;
   snapToObjects: boolean;
   inkToShape: boolean;
+  /** Un zigzag par-dessus de l'écriture l'efface. */
+  scratchToErase: boolean;
+  /** Une ligne tracée au milieu d'un mot l'efface. */
+  strikeToErase: boolean;
 }
 
 export const DEFAULT_TABLET: TabletSettings = {
@@ -179,4 +183,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tablet: DEFAULT_TABLET,
   snapToObjects: true,
   inkToShape: false,
+  scratchToErase: true,
+  strikeToErase: true,
 };

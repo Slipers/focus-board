@@ -51,6 +51,7 @@ import {
 } from '../core/factory';
 import { eraseFromStroke } from '../core/erase';
 import { recognizeShape } from '../core/recognize';
+import { detectScratchGesture, findScratchTargets } from '../core/scratch';
 import { InlineTextEditor } from './textedit';
 import { applyMove, applyResize, applyRotate, computeSnap, type TransformSession } from './transform';
 
@@ -110,7 +111,7 @@ type Action =
       worldMidY: number;
     };
 
-type EditorEvent = 'change' | 'selection' | 'tool' | 'camera' | 'pointer' | 'penFallback';
+type EditorEvent = 'change' | 'selection' | 'tool' | 'camera' | 'pointer' | 'penFallback' | 'scratchErase';
 
 export type PenPressureMode = 'unknown' | 'real' | 'synthetic';
 
@@ -153,6 +154,14 @@ export class Editor {
   private lastRaw: { x: number; y: number; p: number } | null = null;
   /** Extrémité de la « corde » du stabilisateur (voir stabilizePoint). */
   private stabAnchor: { x: number; y: number } | null = null;
+  /**
+   * Tracé brut, avant stabilité et lissage : c'est lui qu'on analyse pour
+   * reconnaître une rature — les filtres aplatissent précisément les petits
+   * zigzags qu'on cherche.
+   */
+  private rawTrace: number[] = [];
+  /** Dernier effacement par rature, pour la notification. */
+  lastScratch: { kind: 'zigzag' | 'strike'; count: number } | null = null;
   /** Grossissement courant de la gomme, piloté par la vitesse du geste. */
   private eraserScale = 1;
   private eraserLastTime = 0;
@@ -174,6 +183,7 @@ export class Editor {
     camera: new Set(),
     pointer: new Set(),
     penFallback: new Set(),
+    scratchErase: new Set(),
   };
 
   constructor(private host: HTMLElement, store: BoardStore, settings: AppSettings) {
@@ -961,6 +971,7 @@ export class Editor {
     this.smoothB = { ...seed };
     this.lastRaw = { ...seed };
     this.stabAnchor = { x: world.x, y: world.y };
+    this.rawTrace = [world.x, world.y, pressure];
     this.live = {
       brush,
       color: this.style.ink,
@@ -1179,6 +1190,7 @@ export class Editor {
   private extendDraw(x: number, y: number, pressure: number, bypassStability = false) {
     if (!this.live || !this.smoothA || !this.smoothB) return;
     this.lastRaw = { x, y, p: pressure };
+    if (!bypassStability) this.rawTrace.push(x, y, pressure);
     const tablet = this.settings.tablet;
     const amount = tablet.smoothing ? cascadeAmount(tablet.streamline) : 0;
 
@@ -1425,6 +1437,33 @@ export class Editor {
     this.schedule();
   }
 
+  /**
+   * Si le tracé qui vient de se terminer est un gribouillis ou une rature
+   * par-dessus de l'écriture, efface ce qu'il recouvre au lieu de l'ajouter.
+   * Renvoie faux quand le geste ne recouvre rien : il reste alors un trait.
+   */
+  private tryScratchErase(raw: number[], size: number): boolean {
+    const s = this.settings;
+    if (!s.scratchToErase && !s.strikeToErase) return false;
+    const zoom = this.store.camera.zoom;
+    const gesture = detectScratchGesture(raw, zoom);
+    if (!gesture) return false;
+    if (gesture.kind === 'zigzag' && !s.scratchToErase) return false;
+    if (gesture.kind === 'strike' && !s.strikeToErase) return false;
+
+    const targets = findScratchTargets(gesture, raw, this.store.allSorted(), zoom, size);
+    if (!targets.length) return false;
+
+    this.store.begin(this.selection);
+    for (const t of targets) this.store.remove(t.id);
+    const remaining = this.selection.filter((id) => this.store.has(id));
+    this.store.commit(gesture.kind === 'zigzag' ? 'Gribouillis' : 'Rature', remaining);
+    this.setSelection(remaining);
+    this.lastScratch = { kind: gesture.kind, count: targets.length };
+    this.emit('scratchErase');
+    return true;
+  }
+
   private finishDraw() {
     // Le filtre retarde le tracé de quelques échantillons : on le laisse
     // converger vers la position réelle du stylet au lever, sinon le trait
@@ -1447,7 +1486,13 @@ export class Editor {
     this.smoothB = null;
     this.lastRaw = null;
     this.stabAnchor = null;
+    const raw = this.rawTrace;
+    this.rawTrace = [];
     if (!live) return;
+
+    // Le surligneur passe par définition par-dessus l'écriture : ce n'est
+    // jamais une rature.
+    if (live.brush !== 'highlighter' && this.tryScratchErase(raw, live.size)) return;
 
     // Le filtre temps réel en cascade a déjà fait le travail pendant la
     // capture (voir extendDraw) ; une seconde passe ajoutait plus de

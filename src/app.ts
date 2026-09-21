@@ -62,6 +62,12 @@ class App {
 
     this.editor.on('change', () => this.scheduleSave());
     this.editor.on('camera', () => this.scheduleSave());
+    this.editor.on('scratchErase', () => {
+      const s = this.editor.lastScratch;
+      if (!s) return;
+      const what = s.count > 1 ? `${s.count} éléments effacés` : '1 élément effacé';
+      toast(`${s.kind === 'zigzag' ? 'Gribouillis' : 'Rature'} : ${what} — Ctrl+Z pour annuler`);
+    });
     this.editor.on('penFallback', () => {
       toast('Le stylet ne transmet pas de vraie pression — épaisseur simulée. Réglages → Diagnostic du stylet pour activer Windows Ink.');
     });

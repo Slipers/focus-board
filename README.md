@@ -23,6 +23,7 @@ Microsoft Whiteboard ferme, et l'application installée n'était qu'une coquille
 - 🖊️ **Encre à pression réelle** — stylo, feutre, surligneur, crayon ; largeur variable avec attaque et sortie effilées, détection automatique d'une tablette qui ne transmet pas de vraie pression avec repli sur la vitesse
 - 🧽 **Gomme au trait ou ponctuelle** — la gomme ponctuelle découpe un tracé en deux, même au milieu d'une longue ligne ; sa taille grossit avec la vitesse du geste, pour balayer large d'un coup de main
 - 🔷 **Formes, notes, texte, images** — rectangle, ellipse, losange, triangle, étoile, ligne, flèche ; notes autocollantes à texte auto-ajusté ; images par glisser-déposer ou collage
+- ✍️ **Raturer pour effacer** — un gribouillis en zigzag ou une ligne au milieu d'un mot l'efface, comme avec l'Apple Pencil ; sur une zone vide, le geste reste un trait normal
 - ✨ **Reconnaissance de formes** — un cercle ou un rectangle tracé à main levée devient une forme nette (désactivable)
 - 🧲 **Sélection et manipulation** — rectangle ou lasso, déplacement, redimensionnement, rotation, magnétisme sur les bords et centres voisins, ordre de superposition
 - 🔍 **Zoom fluide à la molette**, centré sur le curseur, et pan au clic molette maintenu ou à deux doigts

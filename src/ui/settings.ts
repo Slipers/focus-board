@@ -202,6 +202,18 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
       (v) => (s.inkToShape = v),
     ),
     toggle(
+      'Gribouiller pour effacer',
+      'Un zigzag par-dessus ce que vous avez écrit l’efface, comme sur iPad. Sur une zone vide, le zigzag reste un trait normal.',
+      () => s.scratchToErase,
+      (v) => (s.scratchToErase = v),
+    ),
+    toggle(
+      'Rayer pour effacer',
+      'Une ligne tracée au milieu d’un mot l’efface. Un soulignement, ou un trait qui traverse largement, reste un trait normal.',
+      () => s.strikeToErase,
+      (v) => (s.strikeToErase = v),
+    ),
+    toggle(
       'Quadrillage',
       'Affiche des repères sur le tableau. Désactivez pour un fond entièrement uni.',
       () => editor.store.background !== 'blank',
