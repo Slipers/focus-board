@@ -1,5 +1,5 @@
 import type { AnyElement } from './types';
-import { elementBounds, inflate, rectContainsRect, type Rect } from './geom';
+import { elementBounds, inflate, localToWorld, rectContainsRect, type Rect } from './geom';
 import { segmentHitsElement } from './hit';
 import { layoutText } from './text';
 
@@ -20,6 +20,10 @@ export type ScratchKind = 'zigzag' | 'strike';
 export interface ScratchGesture {
   kind: ScratchKind;
   bounds: Rect;
+  /** Demi-tours francs (> 100°). */
+  sharpTurns: number;
+  /** Rotation cumulée du tracé, en radians. */
+  turning: number;
 }
 
 /**
@@ -99,23 +103,73 @@ export function detectScratchGesture(world: number[], zoom: number): ScratchGest
   if (chord / pathLen >= 0.92) {
     const angle = Math.abs((Math.atan2(dy, dx) * 180) / Math.PI);
     const fromHorizontal = Math.min(angle, 180 - angle);
-    if (fromHorizontal <= 22 && chord * zoom >= 30) return { kind: 'strike', bounds };
+    if (fromHorizontal <= 22 && chord * zoom >= 30) return { kind: 'strike', bounds, sharpTurns: 0, turning: 0 };
     return null;
   }
 
-  /* --- gribouillis : le stylet repasse plusieurs fois sur la même zone --- */
+  /* --- gribouillis --- */
+  // La forme du geste n'est ici qu'un premier filtre, volontairement large :
+  // un vrai gribouillis humain est court, irrégulier, parfois bouclé. Ce qui
+  // protège vraiment des faux positifs, c'est la vérification des cibles
+  // (findScratchTargets) — un geste qui ne recouvre pas d'écriture reste un
+  // trait, quelle que soit sa forme.
   const diag = Math.hypot(w, h);
-  if (diag === 0 || pathLen / diag < 2.6) return null;
+  if (diag * zoom < 12) return null;
+  // Un zigzag large aux allers-retours espacés — le geste naturel sur un long
+  // mot — ne fait guère plus de 1,2 fois sa diagonale : ce seuil ne sert qu'à
+  // écarter les traits quasi droits.
+  const density = pathLen / diag;
+  if (density < 1.1) return null;
 
-  // Les allers-retours peuvent suivre l'axe long (on balaie le mot de gauche à
-  // droite et retour) ou l'axe court (on monte et descend en avançant). Le
-  // second ressemble davantage à de l'écriture (« MMM »), il en exige plus.
-  const minScreen = 14;
-  const legsX = w * zoom >= minScreen ? countLegs(xs, w * 0.5) : 0;
-  const legsY = h * zoom >= minScreen ? countLegs(ys, h * 0.5) : 0;
+  const minScreen = 10;
+  const legsX = w * zoom >= minScreen ? countLegs(xs, w * 0.35) : 0;
+  const legsY = h * zoom >= minScreen ? countLegs(ys, h * 0.35) : 0;
   const [legsLong, legsShort] = w >= h ? [legsX, legsY] : [legsY, legsX];
-  if (legsLong >= 4 || legsShort >= 6) return { kind: 'zigzag', bounds };
-  return null;
+  const { sharpTurns, turning } = turnStats(xs, ys, Math.max(3 / zoom, Math.min(w, h) * 0.12));
+
+  // Un simple aller-retour sur le mot suffit à dire « efface » ; en travers,
+  // il faut monter et redescendre au moins deux fois.
+  const zigzag = legsLong >= 2 || legsShort >= 4 || sharpTurns >= 3;
+  const loops = turning >= 3 * Math.PI && density >= 1.6;
+  return zigzag || loops ? { kind: 'zigzag', bounds, sharpTurns, turning } : null;
+}
+
+/**
+ * Virages serrés (demi-tours de plus de 100°) et rotation cumulée du tracé,
+ * mesurés sur un rééchantillonnage à pas constant : le bruit de la main,
+ * plus fin que ce pas, n'ajoute pas de faux virages.
+ */
+function turnStats(xs: number[], ys: number[], step: number): { sharpTurns: number; turning: number } {
+  const pts: Array<[number, number]> = [[xs[0], ys[0]]];
+  let acc = 0;
+  for (let i = 1; i < xs.length; i++) {
+    acc += Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
+    if (acc >= step) {
+      pts.push([xs[i], ys[i]]);
+      acc = 0;
+    }
+  }
+  const heading = (a: [number, number], b: [number, number]) => Math.atan2(b[1] - a[1], b[0] - a[0]);
+  const wrap = (a: number) => {
+    while (a > Math.PI) a -= 2 * Math.PI;
+    while (a < -Math.PI) a += 2 * Math.PI;
+    return a;
+  };
+
+  let turning = 0;
+  for (let i = 2; i < pts.length; i++) {
+    turning += Math.abs(wrap(heading(pts[i - 1], pts[i]) - heading(pts[i - 2], pts[i - 1])));
+  }
+
+  let sharpTurns = 0;
+  for (let i = 2; i < pts.length - 2; i++) {
+    const turn = Math.abs(wrap(heading(pts[i], pts[i + 2]) - heading(pts[i - 2], pts[i])));
+    if (turn > (100 * Math.PI) / 180) {
+      sharpTurns++;
+      i += 2; // un même sommet ne compte qu'une fois
+    }
+  }
+  return { sharpTurns, turning };
 }
 
 /**
@@ -132,12 +186,6 @@ export function inkBounds(el: AnyElement): Rect {
   return elementBounds(el);
 }
 
-function intersectionArea(a: Rect, b: Rect): number {
-  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-  return w > 0 && h > 0 ? w * h : 0;
-}
-
 function unionOf(rects: Rect[]): Rect {
   let minX = Infinity;
   let minY = Infinity;
@@ -150,6 +198,92 @@ function unionOf(rects: Rect[]): Rect {
     maxY = Math.max(maxY, r.y + r.h);
   }
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+const contains = (r: Rect, x: number, y: number) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+/** Contour de l'élément en repère local, sous forme de polylignes. */
+function localOutline(el: AnyElement): Array<Array<[number, number]>> {
+  const { w, h } = el;
+  if (el.type === 'stroke') {
+    const line: Array<[number, number]> = [];
+    for (let i = 0; i < el.points.length; i += 3) line.push([el.points[i], el.points[i + 1]]);
+    return [line];
+  }
+  if (el.type === 'shape') {
+    switch (el.shape) {
+      case 'line':
+      case 'arrow': {
+        const [ax, ay, bx, by] = el.pts ?? [0, 0, w, h];
+        return [[[ax, ay], [bx, by]]];
+      }
+      case 'rect':
+        return [[[0, 0], [w, 0], [w, h], [0, h], [0, 0]]];
+      case 'diamond':
+        return [[[w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2], [w / 2, 0]]];
+      case 'triangle':
+        return [[[w / 2, 0], [w, h], [0, h], [w / 2, 0]]];
+      default: {
+        const ring: Array<[number, number]> = [];
+        for (let i = 0; i <= 32; i++) {
+          const a = (i / 32) * Math.PI * 2;
+          ring.push([w / 2 + Math.cos(a) * (w / 2), h / 2 + Math.sin(a) * (h / 2)]);
+        }
+        return [ring];
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * Part de l'encre de l'élément (en longueur) qui se trouve dans `zone`.
+ * Un texte n'a pas de tracé : on prend la part de sa boîte d'encre recouverte.
+ */
+function inkInside(el: AnyElement, zone: Rect, zoom: number): number {
+  if (el.type === 'text' || el.type === 'note' || el.type === 'image') {
+    const b = inkBounds(el);
+    const w = Math.min(zone.x + zone.w, b.x + b.w) - Math.max(zone.x, b.x);
+    const h = Math.min(zone.y + zone.h, b.y + b.h) - Math.max(zone.y, b.y);
+    return w > 0 && h > 0 ? (w * h) / Math.max(1e-6, b.w * b.h) : 0;
+  }
+  const step = 2 / zoom;
+  const toWorld = (lx: number, ly: number) => (el.angle ? localToWorld(el, lx, ly) : { x: lx + el.x, y: ly + el.y });
+  let total = 0;
+  let covered = 0;
+  for (const line of localOutline(el)) {
+    if (line.length === 1) {
+      const p = toWorld(line[0][0], line[0][1]);
+      total += 1;
+      if (contains(zone, p.x, p.y)) covered += 1;
+      continue;
+    }
+    for (let i = 1; i < line.length; i++) {
+      const [ax, ay] = line[i - 1];
+      const [bx, by] = line[i];
+      const len = Math.hypot(bx - ax, by - ay);
+      const k = Math.min(64, Math.max(1, Math.ceil(len / step)));
+      for (let j = 0; j < k; j++) {
+        const t = (j + 0.5) / k;
+        const p = toWorld(ax + (bx - ax) * t, ay + (by - ay) * t);
+        total += len / k;
+        if (contains(zone, p.x, p.y)) covered += len / k;
+      }
+    }
+  }
+  return total > 0 ? covered / total : 0;
+}
+
+/** Part du geste (en longueur) qui passe à l'intérieur de `r`. */
+function gestureFractionInside(world: number[], r: Rect): number {
+  let total = 0;
+  let inside = 0;
+  for (let i = 3; i < world.length; i += 3) {
+    const len = Math.hypot(world[i] - world[i - 3], world[i + 1] - world[i - 2]);
+    total += len;
+    if (contains(r, (world[i] + world[i - 3]) / 2, (world[i + 1] + world[i - 2]) / 2)) inside += len;
+  }
+  return total > 0 ? inside / total : 0;
 }
 
 /** Le geste touche-t-il réellement l'élément, et pas seulement sa boîte ? */
@@ -171,46 +305,77 @@ export function findScratchTargets(
   zoom: number,
   gestureSize: number,
 ): AnyElement[] {
-  const radius = gestureSize / 2 + 2 / zoom;
+  const radius = gestureSize / 2 + 3 / zoom;
   const targets: AnyElement[] = [];
 
   if (gesture.kind === 'zigzag') {
-    const zone = inflate(gesture.bounds, gestureSize);
-    const zoneArea = Math.max(1e-6, zone.w * zone.h);
+    const zone = inflate(gesture.bounds, Math.max(gestureSize, 4 / zoom));
     const longIsX = gesture.bounds.w >= gesture.bounds.h;
+    const [zls, zle, zss, zse] = longIsX
+      ? [zone.x, zone.x + zone.w, zone.y, zone.y + zone.h]
+      : [zone.y, zone.y + zone.h, zone.x, zone.x + zone.w];
+    const zoneShort = zse - zss;
+
     for (const el of elements) {
       if (el.locked) continue;
       if (el.type !== 'stroke' && el.type !== 'text' && el.type !== 'shape') continue;
       const b = inkBounds(el);
-      const area = Math.max(1e-6, b.w * b.h);
-      const inter = intersectionArea(zone, b);
+      // Comparaison de bornes plutôt que d'aires : une barre verticale a une
+      // boîte de largeur nulle, donc une aire d'intersection toujours nulle.
+      if (b.x > zone.x + zone.w || b.x + b.w < zone.x || b.y > zone.y + zone.h || b.y + b.h < zone.y) continue;
 
-      // Le geste tient tout entier dans un contour nettement plus grand :
-      // c'est qu'on colorie l'intérieur d'une forme, pas qu'on la rature.
-      if (inter / zoneArea >= 0.8 && area >= zoneArea * 1.6) continue;
+      // Premier critère : l'encre de l'élément est sous le gribouillis.
+      // Colorier l'intérieur d'un contour laisse le contour dehors ; gribouiller
+      // un mot, même écrit d'un seul trait, en recouvre l'essentiel.
+      const inside = inkInside(el, zone, zoom);
 
-      // Recouvert presque entièrement : effacé même si le zigzag passe entre
-      // les jambages sans les toucher.
-      if (inter / area >= 0.9) {
+      // Un point ou un accent entièrement recouvert part même si le zigzag
+      // passe à côté sans le toucher. Réservé aux vraies petites marques : une
+      // lettre entière que le geste ne touche pas n'est pas raturée — elle est
+      // peut-être simplement entourée.
+      if (inside >= 0.9 && Math.max(b.w, b.h) <= zoneShort * 0.2) {
         targets.push(el);
         continue;
       }
       if (!gestureTouches(el, world, radius)) continue;
+      if (inside >= 0.5) {
+        targets.push(el);
+        continue;
+      }
 
-      // Sinon, le zigzag doit balayer l'élément sur toute sa longueur en
-      // passant par son milieu. On raye un mot en travers de ses lettres,
-      // rarement sur toute leur hauteur : exiger une surface couverte
-      // laisserait les lettres hautes (l, d, t) debout.
-      const [gs, ge, es, ee] = longIsX
-        ? [zone.x, zone.x + zone.w, b.x, b.x + b.w]
-        : [zone.y, zone.y + zone.h, b.y, b.y + b.h];
-      const [cs, ce, fs, fe] = longIsX
-        ? [zone.y, zone.y + zone.h, b.y, b.y + b.h]
-        : [zone.x, zone.x + zone.w, b.x, b.x + b.w];
-      const along = (Math.min(ge, ee) - Math.max(gs, es)) / Math.max(1e-6, ee - es);
-      const midLo = fs + (fe - fs) * 0.3;
-      const midHi = fs + (fe - fs) * 0.7;
-      if (along >= 0.7 && ce >= midLo && cs <= midHi) targets.push(el);
+      // Une lettre haute (l, d, t) dont le gribouillis ne couvre que le milieu :
+      // son encre dépasse en haut et en bas, mais le geste la traverse en
+      // plein centre. Réservé aux éléments étroits devant le gribouillis — un
+      // grand contour traversé n'est pas une lettre.
+      const [els, ele, ess, ese] = longIsX ? [b.x, b.x + b.w, b.y, b.y + b.h] : [b.y, b.y + b.h, b.x, b.x + b.w];
+      const narrow = ele - els <= (zle - zls) * 0.5;
+      const along = (Math.min(zle, ele) - Math.max(zls, els)) / Math.max(1e-6, ele - els);
+      const middle = zse >= ess + (ese - ess) * 0.3 && zss <= ess + (ese - ess) * 0.7;
+      if (narrow && along >= 0.6 && middle) targets.push(el);
+    }
+
+    // Second critère : le gribouillis est sur ce qu'il efface. Entourer un mot
+    // fait tourner le geste autour de lui, pas dessus — et un contour frôlé au
+    // passage ne doit pas suffire à déclencher l'effacement.
+    if (targets.length) {
+      const u = unionOf(targets.map(inkBounds));
+      // La marge suit aussi la grande dimension : une barre verticale seule a
+      // une largeur nulle, et le gribouillis qui la raye déborde forcément.
+      const pad = Math.max(Math.min(u.w, u.h) * 0.3, Math.min(Math.max(u.w, u.h) * 0.25, 12 / zoom), 6 / zoom);
+      const onTarget = gestureFractionInside(world, inflate(u, pad));
+      if (onTarget < 0.5) return [];
+
+      // Entourer un mot de près : une ou deux boucles lisses qui le dépassent
+      // de tous les côtés. Un cercle serré frôle les hampes et ressemble alors
+      // géométriquement à un gribouillis bouclé ; ce qui le trahit, c'est qu'il
+      // encadre l'écriture au lieu de la recouvrir.
+      // Marge rapportée à la petite dimension : autour d'un long mot, un cercle
+      // le serre de près sur les côtés, loin d'un pourcentage de sa largeur.
+      const g = gesture.bounds;
+      const m = Math.min(u.w, u.h) * 0.08;
+      const encloses = g.x < u.x - m && g.x + g.w > u.x + u.w + m && g.y < u.y - m && g.y + g.h > u.y + u.h + m;
+      const smoothLoop = gesture.turning >= 1.5 * Math.PI && gesture.turning <= 4.6 * Math.PI && gesture.sharpTurns <= 1;
+      if (encloses && smoothLoop) return [];
     }
   } else {
     const n = world.length / 3;
