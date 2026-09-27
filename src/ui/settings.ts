@@ -207,6 +207,16 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
       () => s.scratchToErase,
       (v) => (s.scratchToErase = v),
     ),
+    segmented(
+      'Sensibilité du gribouillis',
+      [
+        { id: 'prudent' as const, label: 'Prudent' },
+        { id: 'normal' as const, label: 'Normal' },
+        { id: 'sensible' as const, label: 'Sensible' },
+      ],
+      () => s.scratchSensitivity,
+      (v) => (s.scratchSensitivity = v),
+    ),
     toggle(
       'Rayer pour effacer',
       'Une ligne tracée au milieu d’un mot l’efface. Un soulignement, ou un trait qui traverse largement, reste un trait normal.',

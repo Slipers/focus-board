@@ -1,4 +1,4 @@
-import type { AnyElement } from './types';
+import type { AnyElement, ScratchSensitivity } from './types';
 import { elementBounds, inflate, localToWorld, rectContainsRect, type Rect } from './geom';
 import { segmentHitsElement } from './hit';
 import { layoutText } from './text';
@@ -16,6 +16,30 @@ import { layoutText } from './text';
  */
 
 export type ScratchKind = 'zigzag' | 'strike';
+
+interface ScratchTuning {
+  /** Rapport longueur/diagonale minimal : écarte les traits quasi droits. */
+  density: number;
+  /** Allers-retours le long du grand axe (balayage du mot). */
+  legsLong: number;
+  /** Oscillations en travers (on monte et descend en avançant). */
+  legsShort: number;
+  /** Demi-tours francs. */
+  sharpTurns: number;
+  /** Rotation cumulée pour un gribouillis en boucles. */
+  turning: number;
+  /** Part du geste qui doit passer sur ce qu'il efface. */
+  onTarget: number;
+}
+
+const TUNING: Record<ScratchSensitivity, ScratchTuning> = {
+  // Il faut un gribouillis franc et répété pour effacer.
+  prudent: { density: 1.6, legsLong: 4, legsShort: 6, sharpTurns: 4, turning: 4 * Math.PI, onTarget: 0.6 },
+  // Un aller-retour simple ne suffit pas : trop de traits ordinaires (flèche,
+  // lettre avec retour, trait repassé) reviennent une fois sur eux-mêmes.
+  normal: { density: 1.25, legsLong: 3, legsShort: 4, sharpTurns: 3, turning: 3.5 * Math.PI, onTarget: 0.55 },
+  sensible: { density: 1.1, legsLong: 2, legsShort: 4, sharpTurns: 3, turning: 3 * Math.PI, onTarget: 0.5 },
+};
 
 export interface ScratchGesture {
   kind: ScratchKind;
@@ -69,7 +93,12 @@ export function countLegs(values: number[], threshold: number): number {
 }
 
 /** Le tracé est-il un geste de rature ? `world` est à plat [x, y, p, …]. */
-export function detectScratchGesture(world: number[], zoom: number): ScratchGesture | null {
+export function detectScratchGesture(
+  world: number[],
+  zoom: number,
+  sensitivity: ScratchSensitivity = 'normal',
+): ScratchGesture | null {
+  const t = TUNING[sensitivity];
   const n = world.length / 3;
   if (n < 6) return null;
 
@@ -119,18 +148,27 @@ export function detectScratchGesture(world: number[], zoom: number): ScratchGest
   // mot — ne fait guère plus de 1,2 fois sa diagonale : ce seuil ne sert qu'à
   // écarter les traits quasi droits.
   const density = pathLen / diag;
-  if (density < 1.1) return null;
+  if (density < t.density) return null;
 
-  const minScreen = 10;
-  const legsX = w * zoom >= minScreen ? countLegs(xs, w * 0.35) : 0;
-  const legsY = h * zoom >= minScreen ? countLegs(ys, h * 0.35) : 0;
+  // Plancher absolu sur l'amplitude d'un aller-retour : sur un geste presque
+  // plat, 35 % d'une étendue de quelques pixels tombe sous le tremblement de
+  // la main, et le bruit se met à compter comme des allers-retours.
+  const minScreen = 14;
+  const floor = 6 / zoom;
+  const legsX = w * zoom >= minScreen ? countLegs(xs, Math.max(w * 0.35, floor)) : 0;
+  const legsY = h * zoom >= minScreen ? countLegs(ys, Math.max(h * 0.35, floor)) : 0;
   const [legsLong, legsShort] = w >= h ? [legsX, legsY] : [legsY, legsX];
-  const { sharpTurns, turning } = turnStats(xs, ys, Math.max(3 / zoom, Math.min(w, h) * 0.12));
+  // Pas de mesure assez large pour ignorer le tremblement : échantillonné trop
+  // fin, le bruit fait tourner le cap dans tous les sens et gonfle la rotation
+  // cumulée, au point de faire passer un simple aller-retour pour des boucles.
+  const { sharpTurns, sharpSpread, turning } = turnStats(xs, ys, Math.max(6 / zoom, Math.min(w, h) * 0.15));
 
-  // Un simple aller-retour sur le mot suffit à dire « efface » ; en travers,
-  // il faut monter et redescendre au moins deux fois.
-  const zigzag = legsLong >= 2 || legsShort >= 4 || sharpTurns >= 3;
-  const loops = turning >= 3 * Math.PI && density >= 1.6;
+  // Les demi-tours doivent être répartis sur le geste. Une pointe de flèche,
+  // une coche ou un jambage en concentrent plusieurs sur quelques pixels ;
+  // un gribouillis en sème d'un bout à l'autre.
+  const repeatedTurns = sharpTurns >= t.sharpTurns && sharpSpread >= 0.5;
+  const zigzag = legsLong >= t.legsLong || legsShort >= t.legsShort || repeatedTurns;
+  const loops = turning >= t.turning && density >= 1.6;
   return zigzag || loops ? { kind: 'zigzag', bounds, sharpTurns, turning } : null;
 }
 
@@ -139,7 +177,11 @@ export function detectScratchGesture(world: number[], zoom: number): ScratchGest
  * mesurés sur un rééchantillonnage à pas constant : le bruit de la main,
  * plus fin que ce pas, n'ajoute pas de faux virages.
  */
-function turnStats(xs: number[], ys: number[], step: number): { sharpTurns: number; turning: number } {
+function turnStats(
+  xs: number[],
+  ys: number[],
+  step: number,
+): { sharpTurns: number; sharpSpread: number; turning: number } {
   const pts: Array<[number, number]> = [[xs[0], ys[0]]];
   let acc = 0;
   for (let i = 1; i < xs.length; i++) {
@@ -162,14 +204,20 @@ function turnStats(xs: number[], ys: number[], step: number): { sharpTurns: numb
   }
 
   let sharpTurns = 0;
+  let first = -1;
+  let last = -1;
   for (let i = 2; i < pts.length - 2; i++) {
     const turn = Math.abs(wrap(heading(pts[i], pts[i + 2]) - heading(pts[i - 2], pts[i])));
     if (turn > (100 * Math.PI) / 180) {
       sharpTurns++;
+      if (first < 0) first = i;
+      last = i;
       i += 2; // un même sommet ne compte qu'une fois
     }
   }
-  return { sharpTurns, turning };
+  // Part du tracé sur laquelle les demi-tours se répartissent.
+  const sharpSpread = sharpTurns >= 2 && pts.length > 1 ? (last - first) / (pts.length - 1) : 0;
+  return { sharpTurns, sharpSpread, turning };
 }
 
 /**
@@ -304,7 +352,9 @@ export function findScratchTargets(
   elements: AnyElement[],
   zoom: number,
   gestureSize: number,
+  sensitivity: ScratchSensitivity = 'normal',
 ): AnyElement[] {
+  const tuning = TUNING[sensitivity];
   const radius = gestureSize / 2 + 3 / zoom;
   const targets: AnyElement[] = [];
 
@@ -363,7 +413,7 @@ export function findScratchTargets(
       // une largeur nulle, et le gribouillis qui la raye déborde forcément.
       const pad = Math.max(Math.min(u.w, u.h) * 0.3, Math.min(Math.max(u.w, u.h) * 0.25, 12 / zoom), 6 / zoom);
       const onTarget = gestureFractionInside(world, inflate(u, pad));
-      if (onTarget < 0.5) return [];
+      if (onTarget < tuning.onTarget) return [];
 
       // Entourer un mot de près : une ou deux boucles lisses qui le dépassent
       // de tous les côtés. Un cercle serré frôle les hampes et ressemble alors

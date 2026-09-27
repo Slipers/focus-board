@@ -1454,12 +1454,12 @@ export class Editor {
     const s = this.settings;
     if (!s.scratchToErase && !s.strikeToErase) return false;
     const zoom = this.store.camera.zoom;
-    const gesture = detectScratchGesture(raw, zoom);
+    const gesture = detectScratchGesture(raw, zoom, s.scratchSensitivity);
     if (!gesture) return false;
     if (gesture.kind === 'zigzag' && !s.scratchToErase) return false;
     if (gesture.kind === 'strike' && !s.strikeToErase) return false;
 
-    const targets = findScratchTargets(gesture, raw, this.store.allSorted(), zoom, size);
+    const targets = findScratchTargets(gesture, raw, this.store.allSorted(), zoom, size, s.scratchSensitivity);
     if (!targets.length) return false;
 
     this.store.begin(this.selection);
