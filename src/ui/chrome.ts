@@ -1,4 +1,5 @@
-import type { BackgroundKind, BrushKind, DashKind, FontKind, PaperKind, ShapeKind, ToolId } from '../core/types';
+import type { BackgroundKind, BrushKind, DashKind, FontKind, PaperKind, ShapeKind, SpacingScale, ToolId } from '../core/types';
+import { BACKGROUND_STEP } from '../core/types';
 import type { Editor } from '../editor/editor';
 import { BRUSHES } from '../core/brushes';
 import { FONT_LABELS, INK_COLORS, NOTE_COLORS, PAPERS } from '../core/palette';
@@ -53,6 +54,12 @@ const BACKGROUNDS: Array<{ id: BackgroundKind; label: string }> = [
   { id: 'dots', label: 'Points' },
   { id: 'lines', label: 'Lignes' },
   { id: 'iso', label: 'Isométrique' },
+];
+
+const SPACINGS: Array<{ id: SpacingScale; label: string }> = [
+  { id: 0.75, label: 'Serré' },
+  { id: 1, label: 'Normal' },
+  { id: 1.5, label: 'Large' },
 ];
 
 const PAPER_LABELS: Array<{ id: PaperKind; label: string }> = [
@@ -483,6 +490,29 @@ export class Chrome {
             }),
           ),
         ),
+        // Un fond uni n'a pas de motif à espacer.
+        ...(store.background === 'blank'
+          ? []
+          : [
+              h('p', { class: 'popover-title', text: 'Écartement' }),
+              h(
+                'div',
+                { class: 'popover-row' },
+                ...SPACINGS.map((s) =>
+                  h('button', {
+                    class: `chip${store.spacingScale === s.id ? ' active' : ''}`,
+                    title: `${Math.round(BACKGROUND_STEP[store.background] * s.id)} px entre les lignes`,
+                    text: s.label,
+                    on: {
+                      click: () => {
+                        this.editor.setSpacingScale(s.id);
+                        rebuild();
+                      },
+                    },
+                  }),
+                ),
+              ),
+            ]),
         h('p', { class: 'popover-title', text: 'Papier' }),
         h(
           'div',

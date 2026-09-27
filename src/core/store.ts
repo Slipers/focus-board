@@ -1,4 +1,4 @@
-import type { AnyElement, BoardDoc, BackgroundKind, Camera, ID, PaperKind } from './types';
+import type { AnyElement, BoardDoc, BackgroundKind, Camera, ID, PaperKind, SpacingScale } from './types';
 import { uid } from './geom';
 
 interface Patch {
@@ -45,6 +45,7 @@ export class BoardStore {
   createdAt: number;
   background: BackgroundKind;
   paper: PaperKind;
+  spacingScale: SpacingScale;
   camera: Camera;
 
   /** Incrémenté à chaque mutation : sert d'invalidation pour le rendu. */
@@ -65,6 +66,7 @@ export class BoardStore {
     this.createdAt = doc.createdAt;
     this.background = doc.background;
     this.paper = doc.paper;
+    this.spacingScale = doc.spacingScale ?? 1;
     this.camera = { ...doc.camera };
     for (const el of doc.elements) {
       this.els.set(el.id, el);
@@ -81,6 +83,7 @@ export class BoardStore {
       updatedAt: Date.now(),
       background: this.background,
       paper: this.paper,
+      spacingScale: this.spacingScale,
       camera: { ...this.camera },
       elements: this.allSorted().map(clone),
       thumbnail: thumbnail ?? null,

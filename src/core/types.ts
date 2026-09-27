@@ -92,10 +92,27 @@ export interface BoardDoc {
   updatedAt: number;
   background: BackgroundKind;
   paper: PaperKind;
+  /** Écartement du motif de fond, en multiple de son pas naturel. */
+  spacingScale?: SpacingScale;
   camera: Camera;
   elements: AnyElement[];
   thumbnail?: string | null;
 }
+
+export type SpacingScale = 0.75 | 1 | 1.5;
+
+/**
+ * Pas naturel de chaque motif, en px monde. Les lignes d'écriture sont
+ * nettement plus espacées que le quadrillage : il faut la place d'écrire une
+ * ligne de texte, avec ses exposants et ses fractions.
+ */
+export const BACKGROUND_STEP: Record<BackgroundKind, number> = {
+  blank: 0,
+  grid: 44,
+  dots: 44,
+  lines: 88,
+  iso: 44,
+};
 
 export interface BoardSummary {
   id: ID;

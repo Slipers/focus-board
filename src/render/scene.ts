@@ -1,3 +1,4 @@
+import { BACKGROUND_STEP } from '../core/types';
 import type {
   AnyElement,
   BackgroundKind,
@@ -38,6 +39,8 @@ export interface DrawOptions {
    * écran à mise à l'échelle (125 %, 150 %, écran haute densité…).
    */
   dpr?: number;
+  /** Écartement du motif de fond, en px monde ; défaut : le pas du motif. */
+  spacing?: number;
 }
 
 /* ------------------------------------------------------------- formes */
@@ -346,16 +349,22 @@ export class Scene {
 
 /**
  * Le fond est tracé en espace écran : l'épaisseur des lignes reste d'un pixel
- * quel que soit le zoom, et le pas se subdivise pour rester lisible.
+ * quel que soit le zoom.
+ *
+ * L'écartement, lui, est fixe dans le monde : en zoomant, les lignes
+ * s'écartent comme sur une feuille qu'on approche, au lieu de se subdiviser.
+ * Sans cela, des lignes d'écriture cessent d'être des lignes d'écriture dès
+ * qu'on zoome. On ne double le pas qu'une fois très dézoomé, là où le motif
+ * ne serait plus qu'une bouillie.
  */
 export function drawBackground(ctx: CanvasRenderingContext2D, o: DrawOptions) {
   if (o.background === 'blank') return;
   const paper = PAPERS[o.paper];
   const { zoom } = o.cam;
 
-  let spacing = 40;
-  while (spacing * zoom < 16) spacing *= 2;
-  while (spacing * zoom > 130) spacing /= 2;
+  let spacing = o.spacing || BACKGROUND_STEP[o.background];
+  if (spacing <= 0) return;
+  while (spacing * zoom < 9) spacing *= 2;
   const step = spacing * zoom;
 
   const sx = (x: number) => (x - o.cam.x) * zoom;

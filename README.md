@@ -28,6 +28,7 @@ Microsoft Whiteboard ferme, et l'application installée n'était qu'une coquille
 - 🧲 **Sélection et manipulation** — rectangle ou lasso, déplacement, redimensionnement, rotation, magnétisme sur les bords et centres voisins, ordre de superposition
 - 🔍 **Zoom fluide à la molette**, centré sur le curseur, et pan au clic molette maintenu ou à deux doigts
 - ↩️ **Historique par patches** — annuler/rétablir sans jamais dupliquer le document entier
+- 📏 **Lignes pour écrire droit** — un fond ligné façon cahier, avec trois écartements (66, 88 ou 132 px) assez larges pour écrire à la main, poser des exposants ou des fractions. L'écartement reste fixe quand on zoome, comme sur du vrai papier
 - 🎨 **Toile infinie** — fonds uni / quadrillage / points / lignes / isométrique, papier blanc, crème, ardoise ou noir, thème clair/sombre
 - 🔴 **Pointeur laser** — trace qui s'efface toute seule, pour présenter
 - 🗂️ **Bibliothèque locale** — tous vos tableaux avec vignettes, duplication, suppression

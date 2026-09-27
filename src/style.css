@@ -493,6 +493,16 @@ button {
   border-radius: 5px;
 }
 
+.popover-row {
+  display: flex;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.popover-row .chip {
+  flex: 1;
+}
+
 .popover-sep {
   display: block;
   height: 1px;

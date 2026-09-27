@@ -11,7 +11,9 @@ import type {
   StrokeElement,
   TextElement,
   ToolId,
+  SpacingScale,
 } from '../core/types';
+import { BACKGROUND_STEP } from '../core/types';
 import type { BoardStore } from '../core/store';
 import { Scene } from '../render/scene';
 import {
@@ -313,6 +315,7 @@ export class Editor {
         dpr: this.dpr,
         paper: this.store.paper,
         background: this.store.background,
+        spacing: BACKGROUND_STEP[this.store.background] * this.store.spacingScale,
         tablet: this.settings.tablet,
         editingText: editing,
       });
@@ -613,6 +616,11 @@ export class Editor {
 
   setBackground(background: BoardStore['background']) {
     this.store.background = background;
+    this.store.touch();
+  }
+
+  setSpacingScale(scale: SpacingScale) {
+    this.store.spacingScale = scale;
     this.store.touch();
   }
 
