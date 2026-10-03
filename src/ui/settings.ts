@@ -53,6 +53,48 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
     );
   };
 
+  /** Grise un curseur dont l'option maîtresse est coupée, au lieu de le laisser
+   * trompeusement manipulable. */
+  const setEnabled = (field: HTMLElement, on: boolean) => {
+    field.classList.toggle('field-off', !on);
+    const range = field.querySelector('input');
+    if (range) range.disabled = !on;
+  };
+
+  /** Curseur gradué de 0 à 100, avec le mot qui décrit la position courante. */
+  const percent = (
+    label: string,
+    hint: string,
+    get: () => number,
+    set: (v: number) => void,
+    steps: Array<[number, string]>,
+  ) => {
+    const value = h('span', { class: 'field-value' });
+    const input = h('input', { type: 'range', class: 'range' });
+    input.min = '0';
+    input.max = '100';
+    input.step = '1';
+    input.value = String(Math.round(get() * 100));
+    const show = () => {
+      const v = Number(input.value);
+      const word = steps.find(([upTo]) => v <= upTo)?.[1] ?? steps[steps.length - 1][1];
+      value.textContent = `${v} · ${word}`;
+    };
+    input.addEventListener('input', () => {
+      set(Number(input.value) / 100);
+      show();
+      commit();
+    });
+    show();
+    return h(
+      'div',
+      { class: 'field' },
+      h('div', { class: 'field-head' }, h('label', { text: label }), value),
+      input,
+      h('p', { class: 'field-hint', text: hint }),
+    );
+  };
+
   const toggle = (label: string, hint: string, get: () => boolean, set: (v: boolean) => void) => {
     const input = h('input', { type: 'checkbox' });
     input.checked = get();
@@ -107,11 +149,37 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
     () => s.tablet.streamline,
     (v) => (s.tablet.streamline = v),
   );
-  const syncIntensity = () => {
-    intensityField.classList.toggle('field-off', !s.tablet.smoothing);
-    const range = intensityField.querySelector('input');
-    if (range) range.disabled = !s.tablet.smoothing;
-  };
+  const syncIntensity = () => setEnabled(intensityField, s.tablet.smoothing);
+
+  const shapeField = percent(
+    'Sensibilité de la reconnaissance',
+    'À quel point le tracé doit déjà ressembler à la forme. Bas, seul un cercle ou un rectangle net est redressé ; haut, un croquis grossier l’est aussi — au risque de transformer un dessin voulu à main levée.',
+    () => s.shapeSensitivity,
+    (v) => (s.shapeSensitivity = v),
+    [
+      [10, 'formes nettes seulement'],
+      [40, 'exigeant'],
+      [60, 'équilibré'],
+      [85, 'tolérant'],
+      [100, 'redresse presque tout'],
+    ],
+  );
+  const syncShape = () => setEnabled(shapeField, s.inkToShape);
+
+  const scratchField = percent(
+    'Sensibilité du gribouillis',
+    'À quel point le geste doit être franc pour effacer. Bas, il faut une rature insistante ; haut, un simple aller-retour suffit — au risque qu’une lettre en zigzag tracée sur un mot l’efface.',
+    () => s.scratchSensitivity,
+    (v) => (s.scratchSensitivity = v),
+    [
+      [10, 'rature insistante'],
+      [40, 'prudent'],
+      [60, 'normal'],
+      [85, 'sensible'],
+      [100, 'au moindre zigzag'],
+    ],
+  );
+  const syncScratch = () => setEnabled(scratchField, s.scratchToErase);
 
   modal.body.append(
     h('h3', { class: 'section-title', text: 'Stylet et tablette graphique' }),
@@ -199,24 +267,22 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
       'Reconnaissance de formes',
       'Un cercle ou un rectangle tracé à main levée devient une forme nette.',
       () => s.inkToShape,
-      (v) => (s.inkToShape = v),
+      (v) => {
+        s.inkToShape = v;
+        syncShape();
+      },
     ),
+    shapeField,
     toggle(
       'Gribouiller pour effacer',
       'Un zigzag par-dessus ce que vous avez écrit l’efface, comme sur iPad. Sur une zone vide, le zigzag reste un trait normal.',
       () => s.scratchToErase,
-      (v) => (s.scratchToErase = v),
+      (v) => {
+        s.scratchToErase = v;
+        syncScratch();
+      },
     ),
-    segmented(
-      'Sensibilité du gribouillis',
-      [
-        { id: 'prudent' as const, label: 'Prudent' },
-        { id: 'normal' as const, label: 'Normal' },
-        { id: 'sensible' as const, label: 'Sensible' },
-      ],
-      () => s.scratchSensitivity,
-      (v) => (s.scratchSensitivity = v),
-    ),
+    scratchField,
     toggle(
       'Rayer pour effacer',
       'Une ligne tracée au milieu d’un mot l’efface. Un soulignement, ou un trait qui traverse largement, reste un trait normal.',
@@ -253,6 +319,8 @@ export function openSettings(editor: Editor, hooks: SettingsHooks) {
   );
 
   syncIntensity();
+  syncShape();
+  syncScratch();
 
   const versionLine = modal.body.querySelector<HTMLParagraphElement>('.settings-version')!;
   void getDisplayVersion().then((v) => {

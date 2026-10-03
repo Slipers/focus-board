@@ -1518,7 +1518,7 @@ export class Editor {
 
     this.store.begin(this.selection);
     if (this.settings.inkToShape && (live.brush === 'pen' || live.brush === 'marker')) {
-      const rec = recognizeShape(el);
+      const rec = recognizeShape(el, this.settings.shapeSensitivity);
       if (rec) {
         const shape = makeShape({
           shape: rec.shape,

@@ -1,4 +1,5 @@
-import type { AnyElement, ScratchSensitivity } from './types';
+import type { AnyElement } from './types';
+import { mixTuning } from './sensitivity';
 import { elementBounds, inflate, localToWorld, rectContainsRect, type Rect } from './geom';
 import { segmentHitsElement } from './hit';
 import { layoutText } from './text';
@@ -32,14 +33,49 @@ interface ScratchTuning {
   onTarget: number;
 }
 
-const TUNING: Record<ScratchSensitivity, ScratchTuning> = {
-  // Il faut un gribouillis franc et répété pour effacer.
-  prudent: { density: 1.6, legsLong: 4, legsShort: 6, sharpTurns: 4, turning: 4 * Math.PI, onTarget: 0.6 },
-  // Un aller-retour simple ne suffit pas : trop de traits ordinaires (flèche,
-  // lettre avec retour, trait repassé) reviennent une fois sur eux-mêmes.
-  normal: { density: 1.25, legsLong: 3, legsShort: 4, sharpTurns: 3, turning: 3.5 * Math.PI, onTarget: 0.55 },
-  sensible: { density: 1.1, legsLong: 2, legsShort: 4, sharpTurns: 3, turning: 3 * Math.PI, onTarget: 0.5 },
+/** Curseur à 0 : il faut un gribouillis franc et répété pour effacer. */
+const PRUDENT: ScratchTuning = {
+  density: 1.6,
+  legsLong: 4,
+  legsShort: 6,
+  sharpTurns: 4,
+  turning: 4 * Math.PI,
+  onTarget: 0.6,
 };
+// Curseur à 0,5 : un aller-retour simple ne suffit pas : trop de traits
+// ordinaires (flèche, lettre avec retour, trait repassé) reviennent une fois
+// sur eux-mêmes.
+const NORMAL: ScratchTuning = {
+  density: 1.25,
+  legsLong: 3,
+  legsShort: 4,
+  sharpTurns: 3,
+  turning: 3.5 * Math.PI,
+  onTarget: 0.55,
+};
+/** Curseur à 1 : le moindre zigzag sur de l'écriture l'efface. */
+const SENSIBLE: ScratchTuning = {
+  density: 1.1,
+  legsLong: 2,
+  legsShort: 4,
+  sharpTurns: 3,
+  turning: 3 * Math.PI,
+  onTarget: 0.5,
+};
+
+/**
+ * Seuils correspondant à une position du curseur (0..1). Les comptages
+ * d'allers-retours sont arrondis : ce sont des entiers, ils changent donc par
+ * paliers au milieu de chaque intervalle, là où les seuils continus (densité,
+ * rotation, recouvrement) suivent le curseur sans rupture.
+ */
+export function scratchTuning(sensitivity: number): ScratchTuning {
+  const t = mixTuning(sensitivity, PRUDENT, NORMAL, SENSIBLE);
+  t.legsLong = Math.round(t.legsLong);
+  t.legsShort = Math.round(t.legsShort);
+  t.sharpTurns = Math.round(t.sharpTurns);
+  return t;
+}
 
 export interface ScratchGesture {
   kind: ScratchKind;
@@ -93,12 +129,8 @@ export function countLegs(values: number[], threshold: number): number {
 }
 
 /** Le tracé est-il un geste de rature ? `world` est à plat [x, y, p, …]. */
-export function detectScratchGesture(
-  world: number[],
-  zoom: number,
-  sensitivity: ScratchSensitivity = 'normal',
-): ScratchGesture | null {
-  const t = TUNING[sensitivity];
+export function detectScratchGesture(world: number[], zoom: number, sensitivity = 0.5): ScratchGesture | null {
+  const t = scratchTuning(sensitivity);
   const n = world.length / 3;
   if (n < 6) return null;
 
@@ -352,9 +384,9 @@ export function findScratchTargets(
   elements: AnyElement[],
   zoom: number,
   gestureSize: number,
-  sensitivity: ScratchSensitivity = 'normal',
+  sensitivity = 0.5,
 ): AnyElement[] {
-  const tuning = TUNING[sensitivity];
+  const tuning = scratchTuning(sensitivity);
   const radius = gestureSize / 2 + 3 / zoom;
   const targets: AnyElement[] = [];
 

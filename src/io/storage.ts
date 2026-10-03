@@ -1,5 +1,6 @@
 import type { AppSettings, BoardDoc, BoardSummary, ID } from '../core/types';
 import { DEFAULT_SETTINGS, DEFAULT_TABLET } from '../core/types';
+import { clampSensitivity } from '../core/sensitivity';
 
 export interface FileFilter {
   name: string;
@@ -129,6 +130,14 @@ export async function revealBoardsFolder(): Promise<void> {
 
 /* ---------------------------------------------------------- réglages */
 
+/** Les sensibilités étaient des crans nommés avant de devenir des curseurs. */
+const LEGACY_SENSITIVITY: Record<string, number> = { prudent: 0, normal: 0.5, sensible: 1 };
+
+function readSensitivity(stored: unknown, fallback: number): number {
+  if (typeof stored === 'string' && stored in LEGACY_SENSITIVITY) return LEGACY_SENSITIVITY[stored];
+  return clampSensitivity(stored, fallback);
+}
+
 export async function readSettings(): Promise<AppSettings> {
   const stored = api
     ? await api.settings.read()
@@ -137,6 +146,8 @@ export async function readSettings(): Promise<AppSettings> {
     ...DEFAULT_SETTINGS,
     ...stored,
     tablet: { ...DEFAULT_TABLET, ...(stored.tablet ?? {}) },
+    scratchSensitivity: readSensitivity(stored.scratchSensitivity, DEFAULT_SETTINGS.scratchSensitivity),
+    shapeSensitivity: readSensitivity(stored.shapeSensitivity, DEFAULT_SETTINGS.shapeSensitivity),
   };
 }
 

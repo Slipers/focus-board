@@ -101,8 +101,6 @@ export interface BoardDoc {
 
 export type SpacingScale = 0.75 | 1 | 1.5;
 
-export type ScratchSensitivity = 'prudent' | 'normal' | 'sensible';
-
 /**
  * Pas naturel de chaque motif, en px monde. Les lignes d'écriture sont
  * nettement plus espacées que le quadrillage : il faut la place d'écrire une
@@ -178,8 +176,16 @@ export interface AppSettings {
   inkToShape: boolean;
   /** Un zigzag par-dessus de l'écriture l'efface. */
   scratchToErase: boolean;
-  /** À quel point le geste doit être franc pour compter comme un gribouillis. */
-  scratchSensitivity: ScratchSensitivity;
+  /**
+   * À quel point le geste doit être franc pour compter comme un gribouillis,
+   * de 0 (il faut une rature insistante) à 1 (le moindre zigzag suffit).
+   */
+  scratchSensitivity: number;
+  /**
+   * Tolérance de la reconnaissance de formes, de 0 (seul un tracé déjà net
+   * devient une forme) à 1 (un croquis approximatif est redressé).
+   */
+  shapeSensitivity: number;
   /** Une ligne tracée au milieu d'un mot l'efface. */
   strikeToErase: boolean;
 }
@@ -205,6 +211,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   snapToObjects: true,
   inkToShape: false,
   scratchToErase: true,
-  scratchSensitivity: 'normal',
+  scratchSensitivity: 0.5,
+  shapeSensitivity: 0.5,
   strikeToErase: true,
 };
