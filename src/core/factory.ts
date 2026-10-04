@@ -6,6 +6,7 @@ import type {
   FontKind,
   ImageElement,
   NoteElement,
+  PdfPageElement,
   ShapeElement,
   ShapeKind,
   StrokeElement,
@@ -198,6 +199,40 @@ export function makeImage(
     naturalW,
     naturalH,
     radius: 8,
+  };
+}
+
+export function makePdfPage(spec: {
+  asset: string;
+  page: number;
+  pageCount: number;
+  pageW: number;
+  pageH: number;
+  label: string;
+  x: number;
+  y: number;
+  z: number;
+}): PdfPageElement {
+  return {
+    id: uid(),
+    type: 'pdfPage',
+    x: spec.x,
+    y: spec.y,
+    // Un point PDF vaut un pixel monde : à 100 %, la page s'affiche à sa
+    // taille réelle, comme une feuille posée sur le tableau.
+    w: spec.pageW,
+    h: spec.pageH,
+    angle: 0,
+    z: spec.z,
+    opacity: 1,
+    // Verrouillée : on écrit dessus, on ne la déplace pas par mégarde.
+    locked: true,
+    asset: spec.asset,
+    page: spec.page,
+    pageCount: spec.pageCount,
+    pageW: spec.pageW,
+    pageH: spec.pageH,
+    label: spec.label,
   };
 }
 

@@ -11,6 +11,9 @@ export const ICONS = {
   highlighter: wrap('<path d="M6 14.5 14.6 6a2 2 0 0 1 2.8 0l1.6 1.6a2 2 0 0 1 0 2.8L10.4 19H6z"/><path d="M4 21.2h16"/>'),
   pencil: wrap('<path d="M4 20.2 7.6 19 19 7.6a1.8 1.8 0 0 0 0-2.6L18 4a1.8 1.8 0 0 0-2.6 0L4 15.4z"/><path d="M14.6 5.8 17.2 8.4M4.4 15.6l3.6 3.6"/>'),
   eraser: wrap('<path d="M8.6 20.4H20M4.6 16.6l7.6-7.6a2 2 0 0 1 2.8 0l3.6 3.6a2 2 0 0 1 0 2.8l-5 5H8.6z"/><path d="M10 11.4l6.4 6.4"/>'),
+  pdf: wrap(
+    '<path d="M6.4 2.8h7.2L19 8.2v13H6.4z"/><path d="M13.4 2.8v5.6H19"/><path d="M9.2 17.6c2.4-1.2 4-4.6 3.6-6.2-.3-1.2-1.6-1-1.7.2-.2 2 2.2 5.2 4 5.6"/>',
+  ),
   shape: wrap('<rect x="3.2" y="3.2" width="11" height="11" rx="1.6"/><circle cx="15.4" cy="15.4" r="5.4"/>'),
   note: wrap('<path d="M4.4 4.4h15.2v10.4L14.8 19.6H4.4z"/><path d="M19.6 14.8h-4.8v4.8"/>'),
   text: wrap('<path d="M5 6.2V4.6h14v1.6M12 4.6v14.8M9 19.4h6"/>'),

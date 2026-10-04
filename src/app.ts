@@ -11,12 +11,13 @@ import { openShortcuts } from './ui/shortcuts';
 import { initUpdateCard } from './ui/update-card';
 import { showModal, toast } from './ui/modal';
 import { h } from './ui/dom';
-import { exportPNGBase64, exportSVG, makeThumbnail } from './io/export';
+import { exportFilledPdfBase64, exportPNGBase64, exportSVG, filledPdfName, makeThumbnail } from './io/export';
 import {
   deleteBoard,
   isDesktop,
   listBoards,
   onMenuCommand,
+  openBinaryFile,
   openTextFile,
   readBoard,
   readSettings,
@@ -28,6 +29,12 @@ import {
 } from './io/storage';
 
 const SAVE_DEBOUNCE = 700;
+/**
+ * Un tableau qui porte un PDF pèse plusieurs mégaoctets, réécrits en entier à
+ * chaque sauvegarde : on espace davantage les écritures pour ne pas saturer le
+ * disque pendant qu'on écrit.
+ */
+const SAVE_DEBOUNCE_WITH_ASSETS = 2_500;
 const THUMB_INTERVAL = 15_000;
 
 class App {
@@ -60,6 +67,7 @@ class App {
     this.chrome = new Chrome(root, this.editor, this.bridge());
     this.chrome.refreshBoardName(this.store.name);
 
+    this.editor.onNotice = (message) => toast(message);
     this.editor.on('change', () => this.scheduleSave());
     this.editor.on('camera', () => this.scheduleSave());
     this.editor.on('scratchErase', () => {
@@ -118,7 +126,8 @@ class App {
 
   private scheduleSave() {
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => void this.saveNow(), SAVE_DEBOUNCE);
+    const delay = this.store.allAssets().length ? SAVE_DEBOUNCE_WITH_ASSETS : SAVE_DEBOUNCE;
+    this.saveTimer = window.setTimeout(() => void this.saveNow(), delay);
   }
 
   private async saveNow() {
@@ -190,7 +199,7 @@ class App {
   }
 
   private async doExportSVG() {
-    const svg = exportSVG(this.store, this.settings.tablet, {});
+    const svg = await exportSVG(this.store, this.settings.tablet, {});
     const path = await saveFile(`${safeName(this.store.name)}.svg`, svg, 'utf8', [
       { name: 'Image vectorielle SVG', extensions: ['svg'] },
     ]);
@@ -203,6 +212,30 @@ class App {
       { name: 'Tableau FocUs', extensions: ['json'] },
     ]);
     if (path) toast('Tableau exporté.');
+  }
+
+  private async doImportPdf() {
+    const file = await openBinaryFile([{ name: 'Document PDF', extensions: ['pdf'] }]);
+    if (!file) return;
+    try {
+      const pages = await this.editor.addPdfBytes(file.bytes, file.name);
+      toast(`PDF importé — ${pages} page${pages > 1 ? 's' : ''}. Écrivez dessus comme sur une feuille.`);
+    } catch (err) {
+      toast(`PDF illisible : ${(err as Error).message}`);
+    }
+  }
+
+  private async doExportPDF() {
+    try {
+      const base64 = await exportFilledPdfBase64(this.store, this.settings.tablet);
+      const name = filledPdfName(this.store) ?? safeName(this.store.name);
+      const path = await saveFile(`${safeName(name)}-rempli.pdf`, base64, 'base64', [
+        { name: 'Document PDF', extensions: ['pdf'] },
+      ]);
+      if (path) toast('PDF exporté.');
+    } catch (err) {
+      toast(`Export impossible : ${(err as Error).message}`);
+    }
   }
 
   private async doImport() {
@@ -251,6 +284,12 @@ class App {
         break;
       case 'board:import':
         void this.doImport();
+        break;
+      case 'import:pdf':
+        void this.doImportPdf();
+        break;
+      case 'export:pdf':
+        void this.doExportPDF();
         break;
       case 'export:png':
         void this.doExportPNG(false, false);
@@ -336,7 +375,9 @@ class App {
       exportPNG: (selectionOnly, transparent) => void this.doExportPNG(selectionOnly, transparent),
       exportSVG: () => void this.doExportSVG(),
       exportJSON: () => void this.doExportJSON(),
+      exportPDF: () => void this.doExportPDF(),
       importBoard: () => void this.doImport(),
+      importPDF: () => void this.doImportPdf(),
       toggleTheme: () => this.toggleTheme(),
       currentTheme: () => this.settings.theme,
     };

@@ -1,4 +1,4 @@
-import type { AnyElement, BoardDoc, BackgroundKind, Camera, ID, PaperKind, SpacingScale } from './types';
+import type { AnyElement, BoardAsset, BoardDoc, BackgroundKind, Camera, ID, PaperKind, SpacingScale } from './types';
 import { uid } from './geom';
 
 interface Patch {
@@ -52,6 +52,12 @@ export class BoardStore {
   revision = 0;
 
   private els = new Map<ID, AnyElement>();
+  /**
+   * Fichiers source attachés (PDF). Ils survivent à la suppression de leurs
+   * pages le temps de la session, pour qu'une annulation les retrouve ; seuls
+   * ceux encore référencés sont réécrits sur le disque.
+   */
+  private assetMap = new Map<ID, BoardAsset>();
   private sortedCache: AnyElement[] | null = null;
   private maxZ = 0;
   private tx: Map<ID, AnyElement | null> | null = null;
@@ -72,9 +78,36 @@ export class BoardStore {
       this.els.set(el.id, el);
       this.maxZ = Math.max(this.maxZ, el.z);
     }
+    for (const [id, asset] of Object.entries(doc.assets ?? {})) this.assetMap.set(id, asset);
+  }
+
+  /* ----------------------------------------------------------- assets */
+
+  addAsset(id: ID, asset: BoardAsset) {
+    this.assetMap.set(id, asset);
+  }
+
+  asset(id: ID): BoardAsset | undefined {
+    return this.assetMap.get(id);
+  }
+
+  allAssets(): Array<[ID, BoardAsset]> {
+    return [...this.assetMap];
+  }
+
+  /** Assets encore utilisés par un élément : les seuls à enregistrer. */
+  private referencedAssets(): Record<ID, BoardAsset> {
+    const out: Record<ID, BoardAsset> = {};
+    for (const el of this.els.values()) {
+      if (el.type !== 'pdfPage') continue;
+      const asset = this.assetMap.get(el.asset);
+      if (asset) out[el.asset] = asset;
+    }
+    return out;
   }
 
   toDoc(thumbnail?: string | null): BoardDoc {
+    const assets = this.referencedAssets();
     return {
       version: 1,
       id: this.id,
@@ -86,6 +119,7 @@ export class BoardStore {
       spacingScale: this.spacingScale,
       camera: { ...this.camera },
       elements: this.allSorted().map(clone),
+      ...(Object.keys(assets).length ? { assets } : {}),
       thumbnail: thumbnail ?? null,
     };
   }
@@ -114,6 +148,11 @@ export class BoardStore {
 
   nextZ(): number {
     return ++this.maxZ;
+  }
+
+  /** Profondeur de l'élément le plus en arrière, ou 0 sur un tableau vide. */
+  minZ(): number {
+    return Math.min(0, ...[...this.els.values()].map((e) => e.z));
   }
 
   /* -------------------------------------------------------- mutations */

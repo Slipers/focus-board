@@ -53,7 +53,10 @@ interface FocusApi {
       encoding: 'utf8' | 'base64';
       filters: FileFilter[];
     }): Promise<string | null>;
-    open(filters: FileFilter[]): Promise<{ path: string; content: string } | null>;
+    open(
+      filters: FileFilter[],
+      encoding?: 'utf8' | 'base64',
+    ): Promise<{ path: string; name: string; content: string } | null>;
     showItem(path: string): Promise<void>;
   };
   setTheme(theme: 'light' | 'dark'): void;
@@ -194,6 +197,30 @@ export async function openTextFile(filters: FileFilter[]): Promise<string | null
     input.onchange = async () => {
       const file = input.files?.[0];
       resolve(file ? await file.text() : null);
+    };
+    input.click();
+  });
+}
+
+/** Ouvre un fichier binaire (PDF, image) et renvoie son contenu brut. */
+export async function openBinaryFile(
+  filters: FileFilter[],
+): Promise<{ name: string; bytes: Uint8Array } | null> {
+  if (api) {
+    const res = await api.files.open(filters, 'base64');
+    if (!res) return null;
+    const bin = atob(res.content);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { name: res.name, bytes };
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = filters.flatMap((f) => f.extensions.map((e) => `.${e}`)).join(',');
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      resolve(file ? { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) } : null);
     };
     input.click();
   });

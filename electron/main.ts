@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, net, protocol, shell, nativeTheme, Menu } from 'electron';
 import electronUpdaterPkg from 'electron-updater';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -14,6 +14,36 @@ const DEV_URL = process.env.FOCUS_DEV_URL;
 
 /** Occlusion detection on Windows can stall canvas repaints when the window is partly covered. */
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
+/**
+ * L'interface est servie depuis `app://` plutôt que `file://`. Chromium traite
+ * une page `file://` comme une origine opaque : ni worker, ni `fetch`, ni
+ * module chargé depuis le disque. Le rendu des PDF a besoin des trois.
+ */
+const APP_SCHEME = 'app';
+const distDir = () => path.join(__dirname, '..', 'dist');
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+]);
+
+function serveAppScheme() {
+  const root = distDir();
+  protocol.handle(APP_SCHEME, (request) => {
+    const rel = decodeURIComponent(new URL(request.url).pathname);
+    const file = path.join(root, path.normalize(rel));
+    // Une requête ne doit jamais sortir de `dist/`, quels que soient ses `..`.
+    if (file !== root && !file.startsWith(root + path.sep)) {
+      return new Response('Accès refusé', { status: 403 });
+    }
+    return net
+      .fetch(pathToFileURL(file).toString())
+      .catch(() => new Response('Fichier introuvable', { status: 404 }));
+  });
+}
 
 const userDir = () => app.getPath('userData');
 const boardsDir = () => path.join(userDir(), 'boards');
@@ -58,10 +88,19 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // Les erreurs du renderer ne doivent pas rester invisibles dans une fenêtre
+  // sans console : elles partent sur la sortie d'erreur du processus.
+  win.webContents.on('console-message', (_e, level, message, line, source) => {
+    if (level >= 2) console.error(`[renderer] ${message} (${source}:${line})`);
+  });
+  win.webContents.on('did-fail-load', (_e, code, description, url) => {
+    console.error(`[renderer] chargement impossible : ${url} — ${description} (${code})`);
+  });
+
   if (DEV_URL) {
     win.loadURL(DEV_URL);
   } else {
-    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    win.loadURL(`${APP_SCHEME}://-/index.html`);
   }
 
   mainWindow = win;
@@ -80,10 +119,12 @@ function buildMenu() {
         { label: 'Nouveau tableau', accelerator: 'CmdOrCtrl+N', click: () => send('menu', 'board:new') },
         { label: 'Bibliothèque de tableaux', accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'board:library') },
         { type: 'separator' },
-        { label: 'Importer…', click: () => send('menu', 'board:import') },
+        { label: 'Importer un PDF…', accelerator: 'CmdOrCtrl+P', click: () => send('menu', 'import:pdf') },
+        { label: 'Importer un tableau…', click: () => send('menu', 'board:import') },
         {
           label: 'Exporter',
           submenu: [
+            { label: 'PDF rempli…', click: () => send('menu', 'export:pdf') },
             { label: 'Image PNG…', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('menu', 'export:png') },
             { label: 'Vectoriel SVG…', click: () => send('menu', 'export:svg') },
             { label: 'Fichier .focusboard…', click: () => send('menu', 'export:json') },
@@ -281,11 +322,16 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('file:open', async (_e, filters: Electron.FileFilter[]) => {
-  const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile'], filters });
-  if (res.canceled || !res.filePaths[0]) return null;
-  return { path: res.filePaths[0], content: await fs.readFile(res.filePaths[0], 'utf8') };
-});
+ipcMain.handle(
+  'file:open',
+  async (_e, filters: Electron.FileFilter[], encoding: 'utf8' | 'base64' = 'utf8') => {
+    const res = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile'], filters });
+    if (res.canceled || !res.filePaths[0]) return null;
+    const file = res.filePaths[0];
+    const buffer = await fs.readFile(file);
+    return { path: file, name: path.basename(file), content: buffer.toString(encoding) };
+  },
+);
 
 ipcMain.handle('shell:showItem', async (_e, filePath: string) => {
   shell.showItemInFolder(filePath);
@@ -306,6 +352,7 @@ ipcMain.on('theme:set', (_e, theme: 'light' | 'dark') => {
 
 app.whenReady().then(async () => {
   await ensureDirs();
+  serveAppScheme();
   buildMenu();
   createWindow();
   app.on('activate', () => {

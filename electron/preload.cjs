@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('focusApi', {
 
   files: {
     save: (args) => ipcRenderer.invoke('file:save', args),
-    open: (filters) => ipcRenderer.invoke('file:open', filters),
+    open: (filters, encoding) => ipcRenderer.invoke('file:open', filters, encoding),
     showItem: (p) => ipcRenderer.invoke('shell:showItem', p),
   },
 

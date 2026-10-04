@@ -46,6 +46,15 @@ const GROUPS: Array<[string, Array<[string, string]>]> = [
     ],
   ],
   [
+    'Fichiers',
+    [
+      ['Ctrl + P', 'Importer un PDF pour écrire dessus'],
+      ['Glisser-déposer', 'Déposer un PDF ou une image sur le tableau'],
+      ['Ctrl + Maj + E', 'Exporter en PNG'],
+      ['Ctrl + N / O', 'Nouveau tableau / bibliothèque'],
+    ],
+  ],
+  [
     'Pendant un geste',
     [
       ['Maj', 'Contraindre (angle, proportions, axe)'],

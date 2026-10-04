@@ -38,6 +38,7 @@ async function waitForServer(timeoutMs = 30_000) {
   return false;
 }
 
+run(process.execPath, ['scripts/copy-pdf-assets.mjs']);
 run(npx, ['vite']);
 
 const tsc = run(npx, ['tsc', '-p', 'tsconfig.electron.json']);

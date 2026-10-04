@@ -1,7 +1,18 @@
-import type { AnyElement, ImageElement, NoteElement, ShapeElement, StrokeElement, TabletSettings, TextElement } from '../core/types';
+import type {
+  AnyElement,
+  ImageElement,
+  NoteElement,
+  PdfPageElement,
+  ShapeElement,
+  StrokeElement,
+  TabletSettings,
+  TextElement,
+} from '../core/types';
 import type { BoardStore } from '../core/store';
+import { PDFDocument, degrees } from 'pdf-lib';
 import { Scene } from '../render/scene';
-import { elementBounds, unionRects } from '../core/geom';
+import { base64ToBytes, bytesToBase64, pdfRaster, setPdfCacheHold } from './pdf';
+import { elementBounds, rectsIntersect, unionRects } from '../core/geom';
 import { BRUSHES, outlineOptionsFor } from '../core/brushes';
 import { strokeOutline } from '../core/freehand';
 import { FONTS, PAPERS, withAlpha } from '../core/palette';
@@ -44,17 +55,24 @@ export async function renderToCanvas(
   const ctx = canvas.getContext('2d')!;
 
   const scene = new Scene();
-  await scene.preload(elements);
-  scene.render(ctx, elements, {
-    cam: { x: box.x, y: box.y, zoom: scale },
-    vw: canvas.width,
-    vh: canvas.height,
-    paper: store.paper,
-    background: store.background,
-    tablet,
-    forExport: true,
-    transparent: o.transparent,
-  });
+  // Pendant l'export, la scène dessine toutes les pages d'un coup : aucune ne
+  // doit être évincée du cache entre son rendu et son tracé.
+  setPdfCacheHold(true);
+  try {
+    await scene.preload(elements, scale);
+    scene.render(ctx, elements, {
+      cam: { x: box.x, y: box.y, zoom: scale },
+      vw: canvas.width,
+      vh: canvas.height,
+      paper: store.paper,
+      background: store.background,
+      tablet,
+      forExport: true,
+      transparent: o.transparent,
+    });
+  } finally {
+    setPdfCacheHold(false);
+  }
   return canvas;
 }
 
@@ -74,6 +92,139 @@ export async function makeThumbnail(store: BoardStore, tablet: TabletSettings): 
   const scale = Math.min(0.6, 360 / Math.max(box.w, box.h, 1));
   const canvas = await renderToCanvas(store, tablet, { scale, padding: 24, transparent: false });
   return canvas.toDataURL('image/webp', 0.62);
+}
+
+/* --------------------------------------------------------------- PDF */
+
+/** Résolution de la couche d'annotations stampée sur la page, en px par point. */
+const PDF_ANNOTATION_SCALE = 3;
+
+/**
+ * Couche transparente de ce qui a été écrit sur une page, dans le repère de la
+ * page elle-même : on la rend dans le monde, puis on applique l'inverse de la
+ * transformation de la page (déplacement, redimensionnement, rotation).
+ * `null` quand rien n'a été écrit dessus — la page reste alors intacte.
+ */
+async function annotationLayer(
+  page: PdfPageElement,
+  annotations: AnyElement[],
+  store: BoardStore,
+  tablet: TabletSettings,
+): Promise<HTMLCanvasElement | null> {
+  const aabb = elementBounds(page);
+  const over = annotations.filter((el) => rectsIntersect(aabb, elementBounds(el)));
+  if (!over.length) return null;
+
+  const scale = PDF_ANNOTATION_SCALE * Math.max(page.pageW / page.w, page.pageH / page.h);
+  const tmp = document.createElement('canvas');
+  tmp.width = Math.max(1, Math.round(aabb.w * scale));
+  tmp.height = Math.max(1, Math.round(aabb.h * scale));
+  const scene = new Scene();
+  await scene.preload(over, scale);
+  scene.render(tmp.getContext('2d')!, over, {
+    cam: { x: aabb.x, y: aabb.y, zoom: scale },
+    vw: tmp.width,
+    vh: tmp.height,
+    paper: store.paper,
+    background: store.background,
+    tablet,
+    forExport: true,
+    transparent: true,
+  });
+
+  const out = document.createElement('canvas');
+  out.width = Math.max(1, Math.round(page.pageW * PDF_ANNOTATION_SCALE));
+  out.height = Math.max(1, Math.round(page.pageH * PDF_ANNOTATION_SCALE));
+  const ctx = out.getContext('2d')!;
+  const cx = page.x + page.w / 2;
+  const cy = page.y + page.h / 2;
+  ctx.scale(PDF_ANNOTATION_SCALE, PDF_ANNOTATION_SCALE); // points de la page -> pixels
+  ctx.scale(page.pageW / page.w, page.pageH / page.h); //   repère local -> points
+  ctx.translate(page.w / 2, page.h / 2); //                 centré -> local
+  ctx.rotate(-page.angle); //                               monde centré -> centré
+  ctx.translate(-cx, -cy); //                               monde -> monde centré
+  ctx.translate(aabb.x, aabb.y);
+  ctx.scale(1 / scale, 1 / scale);
+  ctx.drawImage(tmp, 0, 0);
+  return out;
+}
+
+/**
+ * Pose de l'image sur la page selon la rotation déclarée du PDF : un scan
+ * tourné à 90° a une boîte en largeur, mais s'affiche en hauteur.
+ * `w`/`h` sont les dimensions non tournées de la page.
+ */
+function stampBox(rotation: number, w: number, h: number) {
+  switch (((rotation % 360) + 360) % 360) {
+    case 90:
+      return { x: w, y: 0, rotate: 90 };
+    case 180:
+      return { x: w, y: h, rotate: 180 };
+    case 270:
+      return { x: 0, y: h, rotate: 270 };
+    default:
+      return { x: 0, y: 0, rotate: 0 };
+  }
+}
+
+/**
+ * Exporte un PDF rempli : les pages d'origine, intactes et toujours
+ * vectorielles, avec par-dessus ce qui a été écrit à la main.
+ *
+ * Sans page de PDF sur le tableau, le tableau lui-même part en une page.
+ */
+export async function exportFilledPdfBase64(store: BoardStore, tablet: TabletSettings): Promise<string> {
+  const all = store.allSorted();
+  const pages = all
+    .filter((e): e is PdfPageElement => e.type === 'pdfPage')
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+  const out = await PDFDocument.create();
+
+  if (!pages.length) {
+    const canvas = await renderToCanvas(store, tablet, { scale: 2, padding: 40 });
+    const png = await out.embedPng(canvas.toDataURL('image/png'));
+    const sheet = out.addPage([canvas.width / 2, canvas.height / 2]);
+    sheet.drawImage(png, { x: 0, y: 0, width: sheet.getWidth(), height: sheet.getHeight() });
+    return bytesToBase64(await out.save());
+  }
+
+  const annotations = all.filter((e) => e.type !== 'pdfPage');
+  const sources = new Map<string, PDFDocument>();
+  setPdfCacheHold(true);
+  try {
+    for (const page of pages) {
+      const asset = store.asset(page.asset);
+      if (!asset) continue;
+      let src = sources.get(page.asset);
+      if (!src) {
+        src = await PDFDocument.load(base64ToBytes(asset.data).buffer as ArrayBuffer);
+        sources.set(page.asset, src);
+      }
+      const [copied] = await out.copyPages(src, [page.page - 1]);
+      out.addPage(copied);
+
+      const layer = await annotationLayer(page, annotations, store, tablet);
+      if (!layer) continue;
+      const png = await out.embedPng(layer.toDataURL('image/png'));
+      const box = stampBox(copied.getRotation().angle, copied.getWidth(), copied.getHeight());
+      copied.drawImage(png, {
+        x: box.x,
+        y: box.y,
+        width: page.pageW,
+        height: page.pageH,
+        rotate: degrees(box.rotate),
+      });
+    }
+  } finally {
+    setPdfCacheHold(false);
+  }
+  return bytesToBase64(await out.save());
+}
+
+/** Nom de fichier proposé pour l'export PDF : celui du document importé. */
+export function filledPdfName(store: BoardStore): string | null {
+  const page = store.allSorted().find((e): e is PdfPageElement => e.type === 'pdfPage');
+  return page ? page.label.replace(/\.pdf$/i, '') : null;
 }
 
 /* --------------------------------------------------------------- SVG */
@@ -210,15 +361,29 @@ function imageToSvg(el: ImageElement): string {
   return `<image href="${esc(el.src)}" width="${round(el.w)}" height="${round(el.h)}" preserveAspectRatio="none"/>`;
 }
 
-export function exportSVG(
+/** Une page de PDF part en image : le SVG n'a pas de quoi porter du PDF. */
+function pdfPageToSvg(el: PdfPageElement): string {
+  const sheet = `<rect width="${round(el.w)}" height="${round(el.h)}" fill="#ffffff"/>`;
+  const raster = pdfRaster(el, 2);
+  if (!raster) return sheet;
+  return `${sheet}<image href="${raster.toDataURL('image/png')}" width="${round(el.w)}" height="${round(el.h)}" preserveAspectRatio="none"/>`;
+}
+
+export async function exportSVG(
   store: BoardStore,
   tablet: TabletSettings,
   options: Partial<ExportOptions> = {},
-): string {
+): Promise<string> {
   const o = { ...DEFAULTS, ...options };
   const elements = (o.only ?? store.allSorted()).slice().sort((a, b) => a.z - b.z);
   const box = contentBox(elements, o.padding);
   const paper = PAPERS[store.paper];
+  setPdfCacheHold(true);
+  try {
+    await new Scene().preload(elements, 2);
+  } finally {
+    setPdfCacheHold(false);
+  }
 
   const parts: string[] = [];
   parts.push(
@@ -245,6 +410,9 @@ export function exportSVG(
         break;
       case 'image':
         body = imageToSvg(el as ImageElement);
+        break;
+      case 'pdfPage':
+        body = pdfPageToSvg(el as PdfPageElement);
         break;
     }
     if (!body) continue;

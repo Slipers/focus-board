@@ -74,7 +74,42 @@ export interface ImageElement extends ElementBase {
   radius: number;
 }
 
-export type AnyElement = StrokeElement | ShapeElement | NoteElement | TextElement | ImageElement;
+/**
+ * Une page d'un PDF importé, posée sur le tableau comme une feuille sur
+ * laquelle on écrit. Seule la référence à la page est stockée ici : les octets
+ * du PDF vivent une seule fois dans `BoardDoc.assets`, et la page est
+ * rastérisée à la demande, à la résolution du zoom courant.
+ */
+export interface PdfPageElement extends ElementBase {
+  type: 'pdfPage';
+  /** Clé de l'asset PDF dans le document. */
+  asset: ID;
+  /** Numéro de page, à partir de 1 comme dans un lecteur PDF. */
+  page: number;
+  /** Nombre de pages du document source. */
+  pageCount: number;
+  /** Taille de la page en points PDF (72 par pouce), avant tout redimensionnement. */
+  pageW: number;
+  pageH: number;
+  /** Nom du fichier importé. */
+  label: string;
+}
+
+export interface BoardAsset {
+  kind: 'pdf';
+  /** Nom du fichier d'origine. */
+  name: string;
+  /** Contenu du fichier, en base64. */
+  data: string;
+}
+
+export type AnyElement =
+  | StrokeElement
+  | ShapeElement
+  | NoteElement
+  | TextElement
+  | ImageElement
+  | PdfPageElement;
 export type ElementType = AnyElement['type'];
 
 export interface Camera {
@@ -96,6 +131,8 @@ export interface BoardDoc {
   spacingScale?: SpacingScale;
   camera: Camera;
   elements: AnyElement[];
+  /** Fichiers source attachés au tableau (PDF importés), indexés par clé. */
+  assets?: Record<ID, BoardAsset>;
   thumbnail?: string | null;
 }
 

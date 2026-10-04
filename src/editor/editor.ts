@@ -1,11 +1,13 @@
 import type {
   AnyElement,
   AppSettings,
+  BoardAsset,
   BrushKind,
   DashKind,
   FontKind,
   ID,
   NoteElement,
+  PdfPageElement,
   ShapeElement,
   ShapeKind,
   StrokeElement,
@@ -35,6 +37,7 @@ import {
   elementBounds,
   normalizeRect,
   screenToWorld,
+  uid,
   unionRects,
   type Rect,
 } from '../core/geom';
@@ -46,11 +49,19 @@ import {
   cloneWithOffset,
   makeImage,
   makeNote,
+  makePdfPage,
   makeShape,
   makeText,
   strokeFromWorldPoints,
   textHeightFor,
 } from '../core/factory';
+import {
+  bytesToBase64,
+  clearPdfCache,
+  readPdfPages,
+  registerPdfAsset,
+  setPdfRasterListener,
+} from '../io/pdf';
 import { eraseFromStroke } from '../core/erase';
 import { recognizeShape } from '../core/recognize';
 import { detectScratchGesture, findScratchTargets } from '../core/scratch';
@@ -177,6 +188,10 @@ export class Editor {
   private penSeenAt = 0;
   private spaceDown = false;
   private clipboard: AnyElement[] = [];
+  /** Assets (PDF) des éléments copiés, pour que coller marche d'un tableau à l'autre. */
+  private clipboardAssets = new Map<ID, BoardAsset>();
+  /** Message à relayer à l'utilisateur ; le chrome l'affiche en toast. */
+  onNotice: ((message: string) => void) | null = null;
 
   private listeners: Record<EditorEvent, Set<() => void>> = {
     change: new Set(),
@@ -208,9 +223,19 @@ export class Editor {
     });
 
     this.scene.onAsset = () => this.invalidateScene();
+    setPdfRasterListener(() => this.invalidateScene());
     this.attachStore(store);
+    this.syncPdfAssets();
     this.bindEvents();
     this.resize();
+  }
+
+  /** Le cache PDF suit le tableau ouvert : les octets d'un autre tableau n'ont plus cours. */
+  private syncPdfAssets() {
+    clearPdfCache();
+    for (const [id, asset] of this.store.allAssets()) {
+      if (asset.kind === 'pdf') registerPdfAsset(id, asset.data);
+    }
   }
 
   /* --------------------------------------------------------- événements */
@@ -238,6 +263,7 @@ export class Editor {
     this.selection = [];
     this.style = defaultStyle(store);
     this.attachStore(store);
+    this.syncPdfAssets();
     this.scene.invalidate();
     this.invalidateScene();
     this.emit('change');
@@ -461,6 +487,20 @@ export class Editor {
     this.cameraChanged();
   }
 
+  /** Cadre un rectangle du monde dans la vue, sans jamais agrandir au-delà de 100 %. */
+  zoomToRect(box: { x: number; y: number; w: number; h: number }, padding = 48) {
+    if (box.w <= 0 || box.h <= 0) return;
+    const cam = this.store.camera;
+    cam.zoom = clamp(
+      Math.min((this.vw - padding * 2) / box.w, (this.vh - padding * 2) / box.h),
+      MIN_ZOOM,
+      1,
+    );
+    cam.x = box.x + box.w / 2 - this.vw / 2 / cam.zoom;
+    cam.y = box.y + box.h / 2 - this.vh / 2 / cam.zoom;
+    this.cameraChanged();
+  }
+
   panBy(dxScreen: number, dyScreen: number) {
     const cam = this.store.camera;
     cam.x += dxScreen / cam.zoom;
@@ -594,6 +634,7 @@ export class Editor {
           this.store.update(el.id, { color });
           break;
         case 'image':
+        case 'pdfPage':
           break;
       }
     }
@@ -710,11 +751,102 @@ export class Editor {
     this.setSelection([el.id]);
   }
 
+  /* ------------------------------------------------------------- PDF */
+
+  pdfPages(): PdfPageElement[] {
+    return this.store.allSorted().filter((e): e is PdfPageElement => e.type === 'pdfPage');
+  }
+
+  /**
+   * Les pages importées sont verrouillées : on écrit dessus, la main ne les
+   * déplace pas. Les déverrouiller permet de les repositionner ou de les
+   * supprimer comme n'importe quel élément.
+   */
+  setPdfPagesLocked(locked: boolean) {
+    const pages = this.pdfPages();
+    if (!pages.length) return;
+    this.store.begin(this.selection);
+    for (const page of pages) this.store.update(page.id, { locked });
+    this.store.commit(locked ? 'Verrouiller les pages' : 'Déverrouiller les pages', locked ? [] : this.selection);
+    if (locked) this.setSelection([]);
+    this.emit('tool');
+  }
+
+  pdfPagesLocked(): boolean {
+    const pages = this.pdfPages();
+    return pages.length > 0 && pages.every((p) => p.locked);
+  }
+
+  async addPdfFile(file: File, worldX?: number, worldY?: number): Promise<number> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return this.addPdfBytes(bytes, file.name, worldX, worldY);
+  }
+
+  /**
+   * Pose un PDF sur le tableau : une page par feuille, empilées verticalement,
+   * à leur taille réelle. Le fichier lui-même n'est stocké qu'une fois.
+   */
+  async addPdfBytes(bytes: Uint8Array, name: string, worldX?: number, worldY?: number): Promise<number> {
+    // Le PDF voyage dans le fichier du tableau, réécrit à chaque sauvegarde :
+    // au-delà de cette taille, l'enregistrement deviendrait pénible.
+    if (bytes.length > 60e6) throw new Error('fichier trop lourd (plus de 60 Mo)');
+    const base64 = bytesToBase64(bytes);
+    const assetId = uid();
+    const pages = await readPdfPages(assetId, base64);
+    if (!pages.length) throw new Error('ce PDF ne contient aucune page');
+    this.store.addAsset(assetId, { kind: 'pdf', name, data: base64 });
+
+    const gap = Math.max(24, pages[0].height * 0.05);
+    const start = this.pdfDropPoint(pages[0], worldX, worldY);
+    const ids: ID[] = [];
+    let y = start.y;
+    this.store.begin(this.selection);
+    for (let i = 0; i < pages.length; i++) {
+      const el = makePdfPage({
+        asset: assetId,
+        page: i + 1,
+        pageCount: pages.length,
+        pageW: pages[i].width,
+        pageH: pages[i].height,
+        label: name,
+        // Les pages d'un même document sont alignées à gauche, même quand
+        // l'une d'elles est en paysage.
+        x: start.x,
+        y,
+        // Sous tout le reste : on écrit par-dessus la feuille, jamais dessous.
+        z: this.store.minZ() - pages.length + i,
+      });
+      this.store.add(el);
+      ids.push(el.id);
+      y += el.h + gap;
+    }
+    this.store.commit(`PDF « ${name} »`, []);
+    this.setSelection([]);
+    this.zoomToRect({ x: start.x, y: start.y, w: pages[0].width, h: pages[0].height });
+    return pages.length;
+  }
+
+  /** Coin haut-gauche de la première page : au pointeur, ou à côté du contenu. */
+  private pdfDropPoint(first: { width: number; height: number }, worldX?: number, worldY?: number) {
+    if (worldX !== undefined && worldY !== undefined) return { x: worldX, y: worldY };
+    const box = unionRects(this.store.allSorted().map(elementBounds));
+    if (box) return { x: box.x + box.w + 80, y: box.y };
+    const center = screenToWorld(this.store.camera, this.vw / 2, this.vh / 2);
+    return { x: center.x - first.width / 2, y: center.y - first.height / 2 };
+  }
+
   /* ----------------------------------------------------- presse-papiers */
 
   copySelection() {
     const els = this.selectedElements();
-    if (els.length) this.clipboard = els.map((e) => structuredClone(e));
+    if (!els.length) return;
+    this.clipboard = els.map((e) => structuredClone(e));
+    this.clipboardAssets.clear();
+    for (const el of els) {
+      if (el.type !== 'pdfPage') continue;
+      const asset = this.store.asset(el.asset);
+      if (asset) this.clipboardAssets.set(el.asset, asset);
+    }
   }
 
   cutSelection() {
@@ -730,6 +862,15 @@ export class Editor {
       : screenToWorld(this.store.camera, this.vw / 2, this.vh / 2);
     const dx = center.x - (box.x + box.w / 2);
     const dy = center.y - (box.y + box.h / 2);
+
+    // Coller dans un autre tableau doit y amener le PDF, sinon la page
+    // collée n'aurait plus de source à afficher.
+    for (const [id, asset] of this.clipboardAssets) {
+      if (!this.store.asset(id)) {
+        this.store.addAsset(id, asset);
+        if (asset.kind === 'pdf') registerPdfAsset(id, asset.data);
+      }
+    }
 
     this.store.begin(this.selection);
     const ids: ID[] = [];
@@ -1344,6 +1485,9 @@ export class Editor {
     const pointMode = this.style.eraserMode === 'point';
     for (const el of [...this.store.allSorted()].reverse()) {
       if (el.locked) continue;
+      // Une page de PDF est un support, pas de l'encre : la gomme efface ce
+      // qu'on a écrit dessus, elle ne fait pas disparaître la feuille.
+      if (el.type === 'pdfPage') continue;
       if (!segmentHitsElement(el, ax, ay, bx, by, radius)) continue;
 
       if (!pointMode || el.type !== 'stroke') {
@@ -1621,8 +1765,15 @@ export class Editor {
   private onDrop = (e: DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer?.files?.[0];
-    if (!file || !file.type.startsWith('image/')) return;
+    if (!file) return;
     const world = this.toWorld(e as unknown as MouseEvent);
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      void this.addPdfFile(file, world.x, world.y)
+        .then((pages) => this.onNotice?.(`PDF importé — ${pages} page${pages > 1 ? 's' : ''}.`))
+        .catch((err) => this.onNotice?.(`PDF illisible : ${(err as Error).message}`));
+      return;
+    }
+    if (!file.type.startsWith('image/')) return;
     void this.addImageFile(file, world.x, world.y);
   };
 

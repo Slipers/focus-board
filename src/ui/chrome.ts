@@ -15,7 +15,9 @@ export interface AppBridge {
   exportPNG(selectionOnly: boolean, transparent: boolean): void;
   exportSVG(): void;
   exportJSON(): void;
+  exportPDF(): void;
   importBoard(): void;
+  importPDF(): void;
   toggleTheme(): void;
   currentTheme(): 'light' | 'dark';
 }
@@ -159,6 +161,16 @@ export class Chrome {
         bar.append(btn);
       }
     });
+    bar.append(h('span', { class: 'tool-sep' }));
+    bar.append(
+      h('button', {
+        class: 'tool-btn',
+        title: 'Importer un PDF · Ctrl+P',
+        html: ICONS.pdf,
+        attrs: { 'aria-label': 'Importer un PDF' },
+        on: { click: () => this.app.importPDF() },
+      }),
+    );
     return bar;
   }
 
@@ -223,6 +235,14 @@ export class Chrome {
 
     if (tool === 'select' && selection.length > 0) {
       this.buildSelectionPanel(panel);
+      panel.hidden = false;
+      return;
+    }
+
+    // Sans sélection, l'outil Sélection sert surtout à manipuler les pages
+    // importées : c'est là que leur verrou a sa place.
+    if (tool === 'select' && this.editor.pdfPages().length) {
+      this.buildPdfPanel(panel);
       panel.hidden = false;
       return;
     }
@@ -344,6 +364,28 @@ export class Chrome {
         ),
       );
     }
+  }
+
+  private buildPdfPanel(panel: HTMLElement) {
+    const locked = this.editor.pdfPagesLocked();
+    panel.append(
+      this.group(
+        'Pages PDF',
+        h('button', {
+          class: `chip${locked ? ' active' : ''}`,
+          title: locked
+            ? 'Les pages restent en place : la main écrit dessus sans les déplacer. Cliquez pour les libérer.'
+            : 'Les pages se déplacent, se redimensionnent et se suppriment comme un élément ordinaire.',
+          text: locked ? 'Verrouillées' : 'Libres',
+          on: {
+            click: () => {
+              this.editor.setPdfPagesLocked(!locked);
+              this.refresh();
+            },
+          },
+        }),
+      ),
+    );
   }
 
   private buildEraserPanel(panel: HTMLElement) {
@@ -550,8 +592,17 @@ export class Chrome {
         ? h('button', { class: 'popover-item', text: 'PNG de la sélection', on: { click: () => { close(); this.app.exportPNG(true, true); } } })
         : null,
       h('button', { class: 'popover-item', text: 'Vectoriel SVG', on: { click: () => { close(); this.app.exportSVG(); } } }),
+      h('button', {
+        class: 'popover-item',
+        text: this.editor.pdfPages().length ? 'PDF rempli' : 'Document PDF',
+        title: this.editor.pdfPages().length
+          ? 'Le PDF d’origine, intact, avec par-dessus ce que vous avez écrit'
+          : 'Le tableau en une page PDF',
+        on: { click: () => { close(); this.app.exportPDF(); } },
+      }),
       h('span', { class: 'popover-sep' }),
       h('button', { class: 'popover-item', text: 'Fichier .focusboard', on: { click: () => { close(); this.app.exportJSON(); } } }),
+      h('button', { class: 'popover-item', text: 'Importer un PDF…', on: { click: () => { close(); this.app.importPDF(); } } }),
       h('button', { class: 'popover-item', text: 'Importer un .focusboard…', on: { click: () => { close(); this.app.importBoard(); } } }),
     );
     close = this.mountPopover(panel, anchor);

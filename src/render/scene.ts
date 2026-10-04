@@ -7,6 +7,7 @@ import type {
   ImageElement,
   NoteElement,
   PaperKind,
+  PdfPageElement,
   ShapeElement,
   StrokeElement,
   TabletSettings,
@@ -17,6 +18,7 @@ import { outlineToPath, strokeOutline } from '../core/freehand';
 import { PAPERS, withAlpha } from '../core/palette';
 import { paddedBounds, rectsIntersect, viewportWorldRect, type Rect } from '../core/geom';
 import { fitFontSize, fontString, layoutText } from '../core/text';
+import { pdfRaster, preloadPdfPages } from '../io/pdf';
 
 export interface DrawOptions {
   cam: Camera;
@@ -151,8 +153,16 @@ export class Scene {
     return null;
   }
 
-  /** Attend le chargement de toutes les images : indispensable avant un export. */
-  async preload(elements: AnyElement[]): Promise<void> {
+  /**
+   * Attend le chargement de toutes les images et le rendu des pages PDF :
+   * indispensable avant un export. `scale` est l'échelle de l'export, en
+   * pixels par pixel monde.
+   */
+  async preload(elements: AnyElement[], scale = 2): Promise<void> {
+    await preloadPdfPages(
+      elements.filter((e): e is PdfPageElement => e.type === 'pdfPage'),
+      scale,
+    );
     const sources = elements.filter((e): e is ImageElement => e.type === 'image').map((e) => e.src);
     await Promise.all(
       sources.map(
@@ -223,6 +233,9 @@ export class Scene {
         break;
       case 'image':
         this.drawImage(ctx, el);
+        break;
+      case 'pdfPage':
+        this.drawPdfPage(ctx, el, o);
         break;
     }
 
@@ -342,6 +355,23 @@ export class Scene {
     ctx.clip(clip);
     ctx.drawImage(img, 0, 0, el.w, el.h);
     ctx.restore();
+  }
+
+  /**
+   * Une page de PDF, dessinée à la résolution du zoom courant. La feuille
+   * blanche est tracée d'abord : elle donne tout de suite la bonne surface
+   * d'écriture, même avant que la page soit rastérisée.
+   */
+  private drawPdfPage(ctx: CanvasRenderingContext2D, el: PdfPageElement, o: DrawOptions) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, el.w, el.h);
+    const needed = (el.w / Math.max(1, el.pageW)) * o.cam.zoom * (o.dpr ?? 1);
+    const raster = pdfRaster(el, needed);
+    if (raster) ctx.drawImage(raster, 0, 0, el.w, el.h);
+    // Le liseré sépare la feuille du tableau quand les deux sont clairs.
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.lineWidth = 1 / Math.max(0.05, o.cam.zoom);
+    ctx.strokeRect(0, 0, el.w, el.h);
   }
 }
 
