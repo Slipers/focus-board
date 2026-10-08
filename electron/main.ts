@@ -3,7 +3,7 @@ import electronUpdaterPkg from 'electron-updater';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // electron-updater est un module CommonJS ; Node ne parvient pas à en dériver
@@ -61,17 +61,75 @@ function boardPath(id: string) {
 
 let mainWindow: BrowserWindow | null = null;
 
+/** Délai laissé à `ready-to-show` une fois la page chargée, pour éviter le flash. */
+const REVEAL_GRACE_MS = 600;
+/** Au-delà, la fenêtre s'ouvre quoi qu'il arrive. */
+const REVEAL_DEADLINE_MS = 5_000;
+
+/**
+ * Affiche la fenêtre dès que possible, sans jamais dépendre d'un seul signal.
+ *
+ * `ready-to-show` donne l'ouverture la plus propre — aucune image vide — mais
+ * il attend une première image du compositeur, qui n'arrive pas toujours pour
+ * une fenêtre encore masquée sous Windows : le calcul d'occlusion natif est
+ * désactivé ici (il fige les repaints quand la fenêtre est partiellement
+ * couverte), et sans lui le compositeur peut ne jamais réveiller une fenêtre
+ * cachée. L'application se lançait alors sans jamais apparaître, et chaque
+ * nouvelle tentative laissait un processus fantôme de plus.
+ *
+ * La fin du chargement, puis un délai de garde, prennent donc le relais : une
+ * fenêtre qui s'ouvre une fraction de seconde trop tôt vaut infiniment mieux
+ * qu'une application qui ne s'ouvre pas.
+ */
+function revealWhenReady(win: BrowserWindow) {
+  let revealed = false;
+  const timers: NodeJS.Timeout[] = [];
+
+  const reveal = () => {
+    if (revealed || win.isDestroyed()) return;
+    revealed = true;
+    for (const t of timers) clearTimeout(t);
+    win.show();
+  };
+
+  win.once('ready-to-show', reveal);
+  win.webContents.once('did-stop-loading', () => {
+    timers.push(setTimeout(reveal, REVEAL_GRACE_MS));
+  });
+  timers.push(setTimeout(reveal, REVEAL_DEADLINE_MS));
+  win.on('closed', () => {
+    for (const t of timers) clearTimeout(t);
+  });
+}
+
+/**
+ * Thème enregistré, lu avant même que le renderer démarre : la fenêtre
+ * s'ouvre maintenant sans attendre sa première image, et sa couleur de fond
+ * doit donc déjà être la bonne, sinon un utilisateur en thème clair verrait
+ * un rectangle sombre le temps que l'interface arrive.
+ */
+function startupTheme(): 'light' | 'dark' {
+  try {
+    return JSON.parse(readFileSync(settingsFile(), 'utf8')).theme === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 function createWindow() {
+  const light = startupTheme() === 'light';
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 900,
     minHeight: 600,
     show: false,
-    backgroundColor: '#101114',
+    backgroundColor: light ? '#ffffff' : '#101114',
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#17181c', symbolColor: '#c9ccd4', height: 40 },
+    titleBarOverlay: light
+      ? { color: '#f4f5f7', symbolColor: '#3a3d45', height: 40 }
+      : { color: '#17181c', symbolColor: '#c9ccd4', height: 40 },
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -81,7 +139,7 @@ function createWindow() {
     },
   });
 
-  win.once('ready-to-show', () => win.show());
+  revealWhenReady(win);
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) shell.openExternal(url);
@@ -350,18 +408,38 @@ ipcMain.on('theme:set', (_e, theme: 'light' | 'dark') => {
 
 /* ----------------------------------------------------------------- boot */
 
-app.whenReady().then(async () => {
-  await ensureDirs();
-  serveAppScheme();
-  buildMenu();
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+/**
+ * Une seule instance à la fois. Deux instances se partageraient le même dossier
+ * de tableaux et s'écraseraient l'une l'autre ; surtout, relancer l'application
+ * doit ramener la fenêtre existante au premier plan plutôt que d'ajouter un
+ * processus de plus quand la première ne répond pas.
+ */
+const isPrimaryInstance = app.requestSingleInstanceLock();
+
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
+    win.focus();
   });
-  // En dev, il n'y a ni build publié ni fichier de métadonnées à lire ; et le
-  // portable n'a pas d'emplacement fixe où s'installer par-dessus lui-même.
-  if (app.isPackaged && !isPortableBuild()) setupAutoUpdater();
-});
+
+  app.whenReady().then(async () => {
+    await ensureDirs();
+    serveAppScheme();
+    buildMenu();
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+    // En dev, il n'y a ni build publié ni fichier de métadonnées à lire ; et le
+    // portable n'a pas d'emplacement fixe où s'installer par-dessus lui-même.
+    if (app.isPackaged && !isPortableBuild()) setupAutoUpdater();
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
